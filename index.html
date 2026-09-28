@@ -38,8 +38,15 @@ button{cursor:pointer}
 .app{height:100%;display:grid;grid-template-rows:auto 1fr auto;max-width:560px;margin:0 auto}
 .top{padding:calc(14px + var(--sat)) 18px 10px;display:flex;align-items:center;gap:12px;background:linear-gradient(var(--bg),rgba(14,17,22,.92))}
 .mark{display:flex;align-items:baseline;gap:8px}
-.mark b{font-size:22px;letter-spacing:.02em;font-weight:700}
-.mark b i{font-style:normal;color:var(--brass)}
+.mark{gap:12px}
+.mark b{font-size:44px;line-height:1.05;letter-spacing:-.01em;font-weight:700;
+  background:linear-gradient(100deg,#FF5A4E 0%,#FF9B3D 22%,#FFD66B 42%,#7FE3FF 64%,#6C8CFF 82%,#C27BFF 100%);
+  background-size:135% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
+  filter:drop-shadow(0 0 10px rgba(255,155,61,.28)) drop-shadow(0 0 18px rgba(127,227,255,.18));
+  animation:logoFlow 9s ease-in-out infinite alternate}
+.mark b i{font-style:normal}
+@keyframes logoFlow{from{background-position:0% 50%}to{background-position:100% 50%}}
+@media (prefers-reduced-motion:reduce){.mark b{animation:none}}
 .mark span{font-family:var(--mono);font-size:11.5px;color:var(--muted);letter-spacing:.06em}
 .top .sp{flex:1}
 .icon-btn{width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--surface);display:grid;place-items:center}
@@ -58,6 +65,7 @@ main{overflow-y:auto;padding:4px 18px 24px;-webkit-overflow-scrolling:touch}
 .greet{font-size:13px;color:var(--muted);text-align:center}
 .greet b{color:var(--ink);font-weight:500}
 .mic{position:relative;width:128px;height:128px;border-radius:50%;border:0;background:radial-gradient(circle at 50% 40%,#2A2F39,#171B22 70%);box-shadow:0 0 0 1px var(--line),0 0 0 10px rgba(212,165,90,.05),0 10px 30px rgba(0,0,0,.45);display:grid;place-items:center;transition:transform .15s}
+.mic{touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .mic:active{transform:scale(.97)}
 .mic::before{content:"";position:absolute;inset:6px;border-radius:50%;border:2px solid var(--brass);opacity:.8}
 .mic svg{width:40px;height:40px;stroke:var(--brass);fill:none;stroke-width:1.8}
@@ -183,7 +191,7 @@ main{overflow-y:auto;padding:4px 18px 24px;-webkit-overflow-scrolling:touch}
         <button class="mic" id="micLog" aria-label="말하기 시작">
           <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
         </button>
-        <div class="mic-hint" id="hintLog">버튼을 누르고 말씀하세요</div>
+        <div class="mic-hint" id="hintLog">버튼을 누른 채로 말씀하세요</div>
         <div class="live dim" id="liveLog">예) 어제 엔진오일 갈았어 8만 5천 원</div>
       </div>
       <div class="typebox">
@@ -202,7 +210,7 @@ main{overflow-y:auto;padding:4px 18px 24px;-webkit-overflow-scrolling:touch}
         <button class="mic small" id="micAsk" aria-label="질문하기 시작">
           <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
         </button>
-        <div class="mic-hint" id="hintAsk">궁금한 것을 물어보세요</div>
+        <div class="mic-hint" id="hintAsk">누른 채로 궁금한 것을 물어보세요</div>
         <div class="live dim" id="liveAsk"></div>
       </div>
       <div class="suggest" id="suggest">
@@ -320,41 +328,93 @@ async function api(action, data = {}) {
 /* ═════════════ 음성 인식 · 읽기 ═════════════ */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec = null, recTarget = null;
-function listen(target) {
+/* 누르는 동안만 듣기(푸시투토크)
+   - 안드로이드 크롬은 continuous 모드에서 같은 문장을 누적해 되풀이 전달하는 문제가 있어,
+     짧은 인식 세션을 손가락을 떼기 전까지 이어 붙이는 방식으로 처리합니다. */
+function mergeText(base, add) {
+  base = (base || '').trim(); add = (add || '').trim();
+  if (!add) return base;
+  if (!base) return add;
+  const b = base.replace(/\s+/g, ''), a = add.replace(/\s+/g, '');
+  if (a.startsWith(b)) return add;          // 새 결과가 이전 것을 포함 → 교체
+  if (b.endsWith(a) || b.includes(a)) return base; // 이미 들어간 말 → 무시
+  const bw = base.split(/\s+/), aw = add.split(/\s+/);  // 끝-앞이 겹치면 겹친 부분 한 번만
+  for (let k = Math.min(bw.length, aw.length); k > 0; k--) {
+    if (bw.slice(-k).join(' ') === aw.slice(0, k).join(' ')) return bw.concat(aw.slice(k)).join(' ');
+  }
+  return base + ' ' + add;
+}
+function sessionText(results) {
+  let t = '';
+  for (let i = 0; i < results.length; i++) t = mergeText(t, results[i][0].transcript);
+  return t;
+}
+const PTT = { holding: false, committed: '', sess: '', target: null, busy: false };
+function pttStart(target) {
   if (!SR) { toast('이 브라우저는 음성 인식을 지원하지 않습니다. 직접 입력해 주세요.', true); return; }
-  if (rec) { rec.stop(); return; }
+  if (PTT.holding) return;
   stopSpeaking();
-  recTarget = target;
+  if (rec) { try { rec.abort(); } catch {} rec = null; }
+  Object.assign(PTT, { holding: true, committed: '', sess: '', target });
+  const mic = $(target === 'log' ? '#micLog' : '#micAsk');
+  const live = $(target === 'log' ? '#liveLog' : '#liveAsk');
+  const hint = $(target === 'log' ? '#hintLog' : '#hintAsk');
+  mic.classList.add('on');
+  hint.textContent = '듣고 있습니다… 손을 떼면 끝';
+  live.classList.remove('dim'); live.textContent = '';
+  if (navigator.vibrate) navigator.vibrate(15);
+  pttSession();
+}
+function pttSession() {
+  const target = PTT.target;
+  const live = $(target === 'log' ? '#liveLog' : '#liveAsk');
+  const r = new SR(); rec = r;
+  r.lang = 'ko-KR'; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
+  PTT.sess = '';
+  r.onresult = e => {
+    PTT.sess = sessionText(e.results);
+    live.textContent = mergeText(PTT.committed, PTT.sess);
+  };
+  r.onerror = e => {
+    if (!['no-speech', 'aborted', 'network'].includes(e.error)) toast('음성 인식 오류: ' + e.error, true);
+    if (e.error === 'not-allowed') PTT.holding = false;
+  };
+  r.onend = () => {
+    PTT.committed = mergeText(PTT.committed, PTT.sess); PTT.sess = '';
+    if (rec === r) rec = null;
+    if (PTT.holding) { try { pttSession(); } catch { PTT.holding = false; pttFinish(); } }  // 아직 누르고 있으면 계속 듣기
+    else pttFinish();
+  };
+  try { r.start(); } catch { PTT.holding = false; pttFinish(); }
+}
+function pttStop() {
+  if (!PTT.holding) return;
+  PTT.holding = false;
+  if (navigator.vibrate) navigator.vibrate(10);
+  if (rec) { try { rec.stop(); } catch { pttFinish(); } } else pttFinish();
+}
+function pttFinish() {
+  const target = PTT.target; if (!target) return;
   const mic = $(target === 'log' ? '#micLog' : '#micAsk');
   const live = $(target === 'log' ? '#liveLog' : '#liveAsk');
   const hint = $(target === 'log' ? '#hintLog' : '#hintAsk');
   const txt = $(target === 'log' ? '#txtLog' : '#txtAsk');
-  let finalText = '';
-  rec = new SR(); rec.lang = 'ko-KR'; rec.interimResults = true; rec.continuous = true;
-  let silence;
-  const arm = () => { clearTimeout(silence); silence = setTimeout(() => rec && rec.stop(), 2200); };
-  rec.onstart = () => { mic.classList.add('on'); hint.textContent = '듣고 있습니다… 다시 누르면 끝'; live.classList.remove('dim'); live.textContent = ''; arm(); };
-  rec.onresult = e => {
-    let interim = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const r = e.results[i];
-      if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript;
-    }
-    live.textContent = (finalText + interim).trim();
-    arm();
-  };
-  rec.onerror = e => { if (e.error !== 'no-speech' && e.error !== 'aborted') toast('음성 인식 오류: ' + e.error, true); };
-  rec.onend = () => {
-    clearTimeout(silence);
-    mic.classList.remove('on');
-    hint.textContent = target === 'log' ? '버튼을 누르고 말씀하세요' : '궁금한 것을 물어보세요';
-    rec = null;
-    const t = (finalText || live.textContent).trim();
-    if (!t) { live.classList.add('dim'); return; }
-    txt.value = t; autoGrow(txt);
-    if (S.auto) (target === 'log' ? doParse() : doAsk());
-  };
-  rec.start();
+  mic.classList.remove('on');
+  hint.textContent = target === 'log' ? '버튼을 누른 채로 말씀하세요' : '누른 채로 궁금한 것을 물어보세요';
+  const t = PTT.committed.trim();
+  PTT.target = null; PTT.committed = '';
+  if (!t) { live.classList.add('dim'); live.textContent = target === 'log' ? '예) 어제 엔진오일 갈았어 8만 5천 원' : ''; return; }
+  live.textContent = t;
+  txt.value = t; autoGrow(txt);
+  if (S.auto) (target === 'log' ? doParse() : doAsk());
+}
+function bindPTT(sel, target) {
+  const b = $(sel);
+  b.addEventListener('pointerdown', e => { e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch {} pttStart(target); });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(ev => b.addEventListener(ev, pttStop));
+  b.addEventListener('contextmenu', e => e.preventDefault());
+  b.addEventListener('keydown', e => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); pttStart(target); } });
+  b.addEventListener('keyup', e => { if (e.key === ' ' || e.key === 'Enter') pttStop(); });
 }
 function say(text) {
   if (!S.speak || !('speechSynthesis' in window) || !text) return;
@@ -622,8 +682,9 @@ async function boot() {
 
 /* ═════════════ 이벤트 연결 ═════════════ */
 document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => show(t.dataset.v)));
-$('#micLog').addEventListener('click', () => listen('log'));
-$('#micAsk').addEventListener('click', () => listen('ask'));
+bindPTT('#micLog', 'log');
+bindPTT('#micAsk', 'ask');
+document.addEventListener('visibilitychange', () => { if (document.hidden) pttStop(); });
 $('#sendLog').addEventListener('click', doParse);
 $('#sendAsk').addEventListener('click', () => doAsk());
 ['#txtLog', '#txtAsk'].forEach(sel => {
