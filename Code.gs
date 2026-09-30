@@ -1,13 +1,19 @@
 /**
- * Lobby — 말로 기록하고, 말로 묻는 개인 비서
- * 백엔드: Google Apps Script  (설계서 v0.3 · 1차 MVP)
+ * Lobby v2 — 말로 기록하고, 말로 묻고, 회사 문서를 읽고, 밤마다 보고하는 개인 비서
+ * 백엔드: Google Apps Script (스프레드시트에 붙어 있는 스크립트)
  *
- * [처음 한 번만]
- *  1) 프로젝트 설정 > 스크립트 속성에 추가
- *       ANTHROPIC_API_KEY = sk-ant-...
- *       APP_PIN           = 앱 접속 암호(예: 4~6자리 숫자)
- *  2) 편집기 상단 함수 목록에서 setup 선택 → 실행 (권한 승인)
- *  3) 배포 > 새 배포 > 웹 앱 / 실행: 나 / 액세스: 모든 사용자 → URL 복사
+ * [v1 → v2 업데이트 방법]
+ *  1) 이 코드를 Code.gs에 통째로 덮어써서 붙여넣고 저장
+ *  2) 함수 목록에서 setup 선택 → 실행 → 권한 승인 (구글 드라이브·문서 권한이 새로 추가됩니다)
+ *  3) 배포 > 배포 관리 > 연필(수정) > 버전: "새 버전" > 배포   ← 웹 앱 주소가 그대로 유지됩니다
+ *
+ * [처음 설치라면]
+ *  - 스크립트 속성: ANTHROPIC_API_KEY, APP_PIN 추가 후 위 2)~3) 진행 (3은 "새 배포 > 웹 앱")
+ *
+ * setup이 하는 일
+ *  - 시트 탭 생성: 기록·프로필·분류·대화로그·변경이력·휴지통·문서·문서조각·보고서·예약
+ *  - 구글 드라이브에 "Lobby 문서" 폴더 생성 (여기에 승인원·작업표준서 등을 넣으면 자동으로 읽음)
+ *  - 자동 실행 등록: 15분마다 예약 확인(밤 10시 보고서 포함), 1시간마다 문서 읽기, 새벽 4시 휴지통 정리
  */
 
 // ───────────────────────── 설정 ─────────────────────────
@@ -16,20 +22,35 @@ const CONFIG = {
   TZ: 'Asia/Seoul',
   TRASH_DAYS: 30,               // 삭제 후 복구 가능 기간(일)
   MAX_ROWS_TO_AI: 150,          // 답변 작성 시 Claude에게 넘길 최대 기록 수
+  DOCS_FOLDER_NAME: 'Lobby 문서',
+  DAILY_REPORT_TIME: '22:00',   // 오늘의 보고서 시각 (앱의 보고 탭에서도 바꿀 수 있음)
+  CHUNK_SIZE: 1500,             // 문서를 나누는 조각 크기(글자)
+  CHUNK_OVERLAP: 200,
+  MAX_DOC_CHUNKS_TO_AI: 8,      // 답변에 넘길 문서 조각 수
+  INDEX_BUDGET_MS: 270000,      // 자동 문서 읽기 1회 최대 시간(4.5분)
+  PDF_AI_MAX_MB: 25,            // 글자를 못 뽑은 PDF를 Claude로 읽을 때 최대 크기
 };
 
 const SH = {
   RECORD: '기록', PROFILE: '프로필', CATEGORY: '분류',
   LOG: '대화로그', HISTORY: '변경이력', TRASH: '휴지통',
+  DOCS: '문서', CHUNKS: '문서조각', REPORT: '보고서', TASKS: '예약',
 };
 
 const REC_HEADERS = ['ID', '입력일시', '대상일', '대상시각', '유형', '분류', '제목', '내용',
   '금액', '인물', '장소', '태그', '상태', '원문', '수정일시', '삭제일시'];
 const COL = REC_HEADERS.reduce((o, h, i) => (o[h] = i, o), {});
+const DOC_HEADERS = ['파일ID', '파일명', '형식', '수정일시', '조각수', '읽은일시', '상태', '링크'];
+const CHUNK_HEADERS = ['파일ID', '파일명', '조각', '위치', '본문'];
+const REPORT_HEADERS = ['ID', '생성일시', '종류', '제목', '음성요약', '상세', '읽음', '예약ID'];
+const TASK_HEADERS = ['ID', '이름', '반복', '요일', '날짜', '시각', '요청', '활성', '마지막실행', '다음실행'];
 
 const TYPES = ['일상', '지출', '일정', '업무일정', '정보', '특이점', '아이디어'];
 const STATES = ['정상', '예정', '완료', '취소', '삭제'];
 const EDITABLE = ['대상일', '대상시각', '유형', '분류', '제목', '내용', '금액', '인물', '장소', '태그', '상태'];
+const REPEATS = ['매일', '매주', '매월', '한번'];
+const WEEKDAYS = ['월', '화', '수', '목', '금', '토', '일'];
+const DAILY_ID = 'DAILY';
 
 const DEFAULT_CATEGORIES = [
   ['차량', '정비·주유·보험·세차'],
@@ -55,6 +76,10 @@ function setup() {
   ensureSheet_(ss, SH.LOG, ['시각', '질문', '조회계획', '음성답변', '해당건수'], ['A:A']);
   ensureSheet_(ss, SH.HISTORY, ['시각', '기록ID', '칸', '이전값', '새값', '경로'], ['A:B']);
   ensureSheet_(ss, SH.TRASH, REC_HEADERS, ['A:D', 'O:P']);
+  ensureSheet_(ss, SH.DOCS, DOC_HEADERS, ['A:A', 'D:D', 'F:F']);
+  ensureSheet_(ss, SH.CHUNKS, CHUNK_HEADERS, ['A:A']);
+  ensureSheet_(ss, SH.REPORT, REPORT_HEADERS, ['A:B', 'H:H']);
+  ensureSheet_(ss, SH.TASKS, TASK_HEADERS, ['A:A', 'D:F', 'I:J']);
 
   if (cat.getLastRow() < 2) {
     const today = fmt_(new Date(), 'yyyy-MM-dd');
@@ -62,12 +87,30 @@ function setup() {
       .setValues(DEFAULT_CATEGORIES.map(r => [r[0], r[1], today]));
   }
 
-  const has = ScriptApp.getProjectTriggers().some(t => t.getHandlerFunction() === 'purgeTrash');
-  if (!has) ScriptApp.newTrigger('purgeTrash').timeBased().everyDays(1).atHour(4).create();
+  // 오늘의 보고서(기본 예약)
+  const tasks = getTasks_();
+  if (!tasks.some(t => t.ID === DAILY_ID)) {
+    const t = { ID: DAILY_ID, 이름: '오늘의 보고서', 반복: '매일', 요일: '', 날짜: '', 시각: CONFIG.DAILY_REPORT_TIME,
+      요청: '__DAILY__', 활성: 'Y', 마지막실행: '', 다음실행: '' };
+    t.다음실행 = nextRun_(t, new Date());
+    saveTaskRow_(t);
+  }
+
+  // 문서 폴더
+  const folder = getDocsFolder_();
+
+  // 자동 실행 (중복 없이)
+  const want = { purgeTrash: 'daily4', runScheduler: 'min15', indexDocs: 'hour1' };
+  const have = ScriptApp.getProjectTriggers().map(t => t.getHandlerFunction());
+  if (have.indexOf('purgeTrash') < 0) ScriptApp.newTrigger('purgeTrash').timeBased().everyDays(1).atHour(4).create();
+  if (have.indexOf('runScheduler') < 0) ScriptApp.newTrigger('runScheduler').timeBased().everyMinutes(15).create();
+  if (have.indexOf('indexDocs') < 0) ScriptApp.newTrigger('indexDocs').timeBased().everyHours(1).create();
 
   const p = PropertiesService.getScriptProperties();
   const miss = ['ANTHROPIC_API_KEY', 'APP_PIN'].filter(k => !p.getProperty(k));
-  Logger.log(miss.length ? '⚠ 스크립트 속성 누락: ' + miss.join(', ') : '✔ Lobby 설정 완료');
+  Logger.log(miss.length ? '⚠ 스크립트 속성 누락: ' + miss.join(', ') : '✔ Lobby v2 설정 완료');
+  Logger.log('📁 문서 폴더: ' + folder.getUrl());
+  return Object.keys(want).length;
 }
 
 function ensureSheet_(ss, name, headers, textCols) {
@@ -82,9 +125,11 @@ function ensureSheet_(ss, name, headers, textCols) {
   return sh;
 }
 
+function sheet_(name) { return SpreadsheetApp.getActiveSpreadsheet().getSheetByName(name); }
+
 // ───────────────────────── 웹 요청 ─────────────────────────
 function doGet() {
-  return json_({ ok: true, app: 'Lobby', msg: 'Lobby 서버가 동작 중입니다.' });
+  return json_({ ok: true, app: 'Lobby', version: 2, msg: 'Lobby 서버가 동작 중입니다.' });
 }
 
 function doPost(e) {
@@ -94,8 +139,12 @@ function doPost(e) {
     if (!pin || String(req.pin) !== String(pin)) return json_({ ok: false, error: '접속 암호가 맞지 않습니다.' });
 
     const handlers = {
-      init: actInit_, parse: actParse_, save: actSave_, ask: actAsk_,
+      init: actInit_, parse: actParse_, save: actSave_,
+      ask: r => actTalk_(Object.assign({}, r, { mode: 'question' })), talk: actTalk_,
       list: actList_, update: actUpdate_, 'delete': actDelete_, restore: actRestore_,
+      docs: actDocs_, reindex: actReindex_,
+      reports: actReports_, readReport: actReadReport_, deleteReport: actDeleteReport_, runDaily: actRunDaily_,
+      saveTask: actSaveTask_, deleteTask: actDeleteTask_,
     };
     const fn = handlers[req.action];
     if (!fn) return json_({ ok: false, error: '알 수 없는 요청: ' + req.action });
@@ -111,7 +160,14 @@ function json_(o) {
 
 // ───────────────────────── init ─────────────────────────
 function actInit_() {
-  return { categories: getCategories_(), types: TYPES, states: STATES, today: fmt_(new Date(), 'yyyy-MM-dd'), recent: recent_(5) };
+  return {
+    version: 2, categories: getCategories_(), types: TYPES, states: STATES,
+    today: fmt_(new Date(), 'yyyy-MM-dd'), recent: recent_(5),
+    unread: getReports_(60).filter(r => r.읽음 !== 'Y').length,
+    latestReport: getReports_(1)[0] || null,
+    docCount: Math.max(0, sheet_(SH.DOCS).getLastRow() - 1),
+    docsFolderUrl: getDocsFolder_().getUrl(),
+  };
 }
 
 // ───────────────────────── 기록: 정리(parse) ─────────────────────────
@@ -128,7 +184,7 @@ function actParse_(req) {
     '  정보=기억해 둘 사실, 특이점=평소와 다른 일·주의할 일, 아이디어=떠오른 생각.',
     '분류(기존): ' + cats.map(c => c.name).join(', '),
     '규칙:',
-    '- 한 발화에 여러 건이 있으면 각각 나눈다.',
+    '- 한 발화에 여러 건이 있으면 각각 나눈다. 호출어("로비야", "안녕 로비" 등)는 내용에서 뺀다.',
     '- 대상일은 yyyy-MM-dd. "어제"=오늘-1, "그저께"=오늘-2, "다음 주 X요일"=다음 주(월~일)의 X요일, "이번 주말"=이번 주 토요일(내용에 "주말" 표기), "다음 달 초"=다음 달 1일(내용에 "초순" 표기).',
     '- 날짜 언급이 없으면 일상·지출·정보·특이점·아이디어는 오늘. 일정·업무일정인데 날짜가 없으면 대상일을 ""로 두고 확인필요에 질문을 적는다.',
     '- 대상시각은 HH:mm(24시간). 없으면 "".',
@@ -185,7 +241,6 @@ function actSave_(req) {
     const prefix = fmt_(now, 'yyyyMMdd');
     let seq = nextSeq_(sh, prefix);
 
-    // 새 분류 승인분 추가
     const known = getCategories_().map(c => c.name);
     const catSh = ss.getSheetByName(SH.CATEGORY);
     items.forEach(it => {
@@ -202,10 +257,10 @@ function actSave_(req) {
       const cat = known.indexOf(it.분류) >= 0 ? it.분류 : '생활';
       rows.push([
         id, nowStr, it.대상일 || fmt_(now, 'yyyy-MM-dd'), it.대상시각 || '',
-        it.유형, cat, mask_(it.제목 || ''), mask_(it.내용 || ''),
+        TYPES.indexOf(it.유형) >= 0 ? it.유형 : '일상', cat, mask_(it.제목 || ''), mask_(it.내용 || ''),
         toNum_(it.금액) === null ? '' : toNum_(it.금액),
         listStr_(it.인물), it.장소 || '', listStr_(it.태그),
-        it.상태 || '정상', raw, '', '',
+        STATES.indexOf(it.상태) >= 0 ? it.상태 : '정상', raw, '', '',
       ]);
       if (it.유형 === '정보' && it.프로필항목 && it.프로필값) upsertProfile_(it.프로필항목, mask_(it.프로필값));
     });
@@ -227,7 +282,7 @@ function nextSeq_(sh, prefix) {
 }
 
 function upsertProfile_(key, val) {
-  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SH.PROFILE);
+  const sh = sheet_(SH.PROFILE);
   const today = fmt_(new Date(), 'yyyy-MM-dd');
   const n = sh.getLastRow() - 1;
   if (n > 0) {
@@ -238,56 +293,106 @@ function upsertProfile_(key, val) {
   sh.appendRow([key, val, today]);
 }
 
-// ───────────────────────── 질문(ask) ─────────────────────────
-function actAsk_(req) {
-  const q = String(req.question || '').trim();
-  if (!q) throw new Error('질문이 비어 있습니다.');
-  const cats = getCategories_().map(c => c.name);
+// ───────────────────────── 대화(talk): 의도 판단 → 기록 / 질문 / 예약 ─────────────────────────
+function actTalk_(req) {
+  const text = mask_(String(req.text || req.question || '').trim());
+  if (!text) throw new Error('말씀하신 내용이 비어 있습니다.');
+  const history = (req.history || []).slice(-4).map(h => ({ 카일: String(h.q || '').slice(0, 300), Lobby: String(h.a || '').slice(0, 400) }));
 
-  // 1) 질문 → 조회계획
-  const planSys = [
-    '너는 개인 비서 Lobby의 질문 해석기다. 카일님의 질문을 기록 시트 조회계획 JSON으로 바꾼다.',
+  const plan = makePlan_(text, history);
+  let intent = plan.의도 || '질문';
+  if (req.mode === 'question' && (intent === '기록' || intent === '예약')) intent = '질문';
+
+  if (intent === '기록') {
+    const r = actParse_({ text: text });
+    return { intent: '기록', items: r.items, raw: r.raw };
+  }
+  if (intent === '예약' && plan.예약) {
+    const t = normalizeTask_(plan.예약);
+    t.다음실행 = nextRun_(t, new Date());
+    return { intent: '예약', task: t, speech: describeTask_(t) + ' 이렇게 예약할까요?' };
+  }
+  return Object.assign({ intent: '질문' }, answer_(text, plan, history));
+}
+
+function makePlan_(text, history) {
+  const cats = getCategories_().map(c => c.name);
+  const docNames = getDocNames_();
+  const sys = [
+    '너는 카일님의 개인 비서 Lobby의 두뇌다. 카일님의 말을 보고 의도를 판단하고 조회계획을 JSON으로 만든다.',
     dateContext_(),
+    '의도(하나):',
+    '  기록 = 있었던 일·지출·앞으로의 일정·기억할 정보·특이점·아이디어를 남기려는 말 ("어제 오일 갈았어 8만원", "다음주 화요일 미라셀 미팅")',
+    '  질문 = 기록·회사 문서·일반 지식에 대한 물음, 요약·정리·계획 요청 ("이번 주 일정 뭐야?", "CR-747 승인원 검사 항목 알려줘")',
+    '  예약 = 정해진 시각에 Lobby가 알아서 하도록 맡기는 말 ("매주 월요일 8시에 이번 주 일정 정리해줘", "금요일 오후 5시에 이번 주 지출 알려줘")',
+    '  대화 = 인사·잡담·감사',
+    '  애매하면 질문. 과거형 서술·금액 보고는 기록.',
     '유형: ' + TYPES.join(', '),
     '분류: ' + cats.join(', '),
     '상태: ' + STATES.filter(s => s !== '삭제').join(', '),
-    '종류: 조회(목록), 통계(합계·횟수·평균), 최근(가장 최근 이력), 요약(기간 회고), 계획(제안), 정보(프로필 사실 질문)',
+    'Lobby가 읽을 수 있는 회사 문서 목록: ' + (docNames.length ? docNames.join(' / ') : '(아직 없음)'),
+    '출처(하나): 기록(카일님이 말로 남긴 개인 기록) | 문서(승인원·작업표준서·검사기준·규격·사양·도면 등 회사 문서) | 둘다 | 없음(일반 상식·잡담).',
+    '종류: 조회(목록), 통계(합계·횟수·평균), 최근(가장 최근 이력), 요약(기간 회고), 계획(제안), 정보(사실 질문)',
     '규칙:',
+    '- 최근대화를 보고 "그거", "아까 그 문서" 같은 말을 해석한다.',
     '- 기간은 대상일 기준. "이번 주"=이번 주 월~일, "이번 달"=1일~말일, "올해"=1/1~12/31, "최근"=지난 30일. 기간 언급이 없고 최근·정보 질문이면 기간 null(전체).',
-    '- 검색어는 제목·내용·태그·인물·장소에서 찾을 핵심 단어. 동의어도 함께(예: 엔진오일 → ["엔진오일","오일"]).',
-    '- 분류·유형은 확실할 때만 넣고, 애매하면 비워서 검색어로 찾는다.',
-    '- 계산: 합계|횟수|평균|없음. 그룹: 월|분류|유형|없음.',
+    '- 검색어는 기록의 제목·내용·태그·인물·장소에서 찾을 핵심 단어(동의어 포함).',
+    '- 문서검색어는 문서 본문에서 찾을 핵심어 최대 8개: 모델명·부품명·검사항목·규격값 단어, 한글/영문 표기와 동의어 포함(예: ["CR-747","CR747","외관","치수","공차"]).',
+    '- 문서파일은 카일님이 특정 문서를 지목하면 목록에서 그 파일명을 그대로 넣고, 아니면 [].',
+    '- 분류·유형은 확실할 때만 넣는다. 계산: 합계|횟수|평균|없음. 그룹: 월|분류|유형|없음.',
+    '- 의도가 예약이면 예약을 채운다: 이름(10자 안팎), 반복(매일|매주|매월|한번), 요일("월,수" 형식, 매주일 때), 날짜(매월이면 일자 숫자, 한번이면 yyyy-MM-dd), 시각(HH:mm 24시간), 요청(그 시각에 Lobby가 스스로 답할 질문 문장). 아니면 예약은 null.',
     '반드시 JSON만 출력:',
-    '{"종류":"","기간":{"시작":"","끝":""},"유형":[],"분류":[],"상태":[],"검색어":[],"계산":"없음","그룹":"없음","정렬":"최신","개수":30}',
+    '{"의도":"질문","출처":"기록","종류":"","기간":{"시작":"","끝":""},"유형":[],"분류":[],"상태":[],"검색어":[],"문서검색어":[],"문서파일":[],"계산":"없음","그룹":"없음","정렬":"최신","개수":30,"예약":null}',
   ].join('\n');
-  const plan = extractJson_(callClaude_(planSys, q, 600));
+  const user = JSON.stringify({ 최근대화: history || [], 말씀: text });
+  const plan = extractJson_(callClaude_(sys, user, 700));
+  plan.의도 = ['기록', '질문', '예약', '대화'].indexOf(plan.의도) >= 0 ? plan.의도 : '질문';
+  plan.출처 = ['기록', '문서', '둘다', '없음'].indexOf(plan.출처) >= 0 ? plan.출처 : '기록';
+  if (plan.의도 === '대화') plan.출처 = '없음';
+  return plan;
+}
 
-  // 2) 시트에서 필터·계산 (숫자는 프로그램이 계산)
-  const result = runPlan_(plan);
-  const profile = getProfile_();
+function answer_(q, plan, history) {
+  const src = plan.출처 || '기록';
+  const useRec = src === '기록' || src === '둘다';
+  const useDoc = src === '문서' || src === '둘다';
+  const result = useRec ? runPlan_(plan) : { rows: [], aiRows: [], stats: null };
+  const kws = (plan.문서검색어 && plan.문서검색어.length) ? plan.문서검색어 : (plan.검색어 || []);
+  const docs = useDoc ? searchDocs_(kws, plan.문서파일 || [], q) : [];
 
-  // 3) 답변 작성
-  const ansSys = [
-    '너는 카일님의 개인 비서 Lobby다. 아래 [조회결과]와 [프로필]만 근거로 답한다.',
+  const sys = [
+    '너는 카일님의 개인 비서 Lobby다. 아래 자료만 근거로 답한다: [조회결과](카일님 기록), [문서발췌](회사 문서), [프로필].',
     dateContext_(),
     '규칙:',
-    '- 기록에 없는 내용은 지어내지 말고 "해당 기록이 없습니다"라고 말한 뒤, 지금 기록할지 묻는다.',
+    '- 기록·문서에 없는 내용은 지어내지 않는다. 기록이 없으면 "해당 기록이 없습니다"라고 말하고 지금 기록할지 묻는다.',
+    '- 문서발췌에 답이 없으면 "등록된 문서에서 찾지 못했습니다"라고 말하고, 어떤 문서를 Lobby 문서 폴더에 넣으면 되는지 한 줄로 제안한다.',
+    '- 출처가 없음(인사·잡담·일반 상식)이면 알고 있는 지식으로 짧고 따뜻하게 답한다.',
     '- 숫자(합계·건수·평균)는 [조회결과].통계 값을 그대로 쓴다. 직접 다시 계산하지 않는다.',
-    '- 음성: 존댓말, 1~3문장, 첫 문장에 결론. 금액은 "48만 2천 원"처럼 읽기 쉽게. 목록이 4건 이상이면 3건까지만 말하고 "나머지는 화면에 정리해 두었습니다".',
-    '- 상세: 화면용. 줄바꿈으로 구분한 짧은 줄들. 목록은 "• " 로 시작. 금액은 482,000원 형식.',
-    '- 근거ID: 답변에 쓴 기록의 ID 배열(최대 10개).',
-    '반드시 JSON만 출력: {"음성":"","상세":"","근거ID":[]}',
+    '- 규격·치수·공차·검사기준·수량 같은 문서 수치는 단위까지 원문 그대로 옮긴다. 추정·반올림 금지.',
+    '- 최근대화를 참고해 앞 질문과 이어지게 답한다.',
+    '- 음성: 존댓말, 1~3문장, 첫 문장에 결론. 금액은 "48만 2천 원"처럼 읽기 쉽게. 문서를 인용하면 "○○ 승인원에 따르면"처럼 문서명만 짧게. 목록이 4건 이상이면 3건까지만 말하고 "나머지는 화면에 정리해 두었습니다".',
+    '- 상세: 화면용. 줄바꿈으로 구분한 짧은 줄들. 목록은 "• "로 시작. 금액은 482,000원 형식. 문서 내용 줄 끝에는 (문서명 · 위치)를 붙인다.',
+    '- 근거ID: 답변에 쓴 기록 ID 배열(최대 10개). 근거문서: 답변에 쓴 문서발췌 번호 배열(예: ["D1","D3"]).',
+    '반드시 JSON만 출력: {"음성":"","상세":"","근거ID":[],"근거문서":[]}',
   ].join('\n');
-  const ansUser = JSON.stringify({ 질문: q, 조회계획: plan, 조회결과: { 통계: result.stats, 기록: result.aiRows }, 프로필: profile });
-  const ans = extractJson_(callClaude_(ansSys, ansUser, 1500));
+  const payload = {
+    질문: q, 최근대화: history || [], 조회계획: plan,
+    조회결과: useRec ? { 통계: result.stats, 기록: result.aiRows } : '(기록은 조회하지 않음)',
+    문서발췌: useDoc ? (docs.length ? docs.map(d => ({ 번호: d.key, 문서: d.파일명, 위치: d.위치, 내용: d.본문 })) : '(관련 문서 조각을 찾지 못함)') : '(문서는 조회하지 않음)',
+    프로필: getProfile_(),
+  };
+  const ans = extractJson_(callClaude_(sys, JSON.stringify(payload), 1800));
 
   const evid = (ans.근거ID || []).map(String);
   const evidence = result.rows.filter(r => evid.indexOf(r.ID) >= 0).slice(0, 10);
+  const dkeys = (ans.근거문서 || []).map(String);
+  const docEvidence = docs.filter(d => dkeys.indexOf(d.key) >= 0)
+    .map(d => ({ 파일명: d.파일명, 위치: d.위치, 링크: d.링크, 발췌: d.본문.replace(/\s+/g, ' ').slice(0, 180) }));
 
-  SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SH.LOG)
-    .appendRow([fmt_(new Date(), 'yyyy-MM-dd HH:mm'), q, JSON.stringify(plan), ans.음성 || '', result.stats.건수]);
+  sheet_(SH.LOG).appendRow([fmt_(new Date(), 'yyyy-MM-dd HH:mm'), q, JSON.stringify(plan), ans.음성 || '',
+    '기록 ' + (result.stats ? result.stats.건수 : 0) + ' / 문서 ' + docs.length]);
 
-  return { speech: ans.음성 || '', detail: ans.상세 || '', evidence: evidence, stats: result.stats, plan: plan };
+  return { speech: ans.음성 || '', detail: ans.상세 || '', evidence: evidence, docEvidence: docEvidence, stats: result.stats, plan: plan };
 }
 
 function runPlan_(plan) {
@@ -309,13 +414,10 @@ function runPlan_(plan) {
   const asc = p.정렬 === '오래된';
   rows.sort((a, b) => (dayOf_(a) + a.대상시각).localeCompare(dayOf_(b) + b.대상시각) * (asc ? 1 : -1));
 
-  // 통계
   const money = rows.map(r => r.금액).filter(v => typeof v === 'number');
   const sum = money.reduce((s, v) => s + v, 0);
   const stats = {
-    건수: rows.length,
-    금액건수: money.length,
-    합계: sum,
+    건수: rows.length, 금액건수: money.length, 합계: sum,
     평균: money.length ? Math.round(sum / money.length) : 0,
     기간: { 시작: from || '', 끝: to || '' },
   };
@@ -339,6 +441,477 @@ function runPlan_(plan) {
   }));
   return { rows: rows, aiRows: aiRows, stats: stats };
 }
+
+// ───────────────────────── 회사 문서: 폴더 · 읽기(색인) · 검색 ─────────────────────────
+function getDocsFolder_() {
+  const p = PropertiesService.getScriptProperties();
+  const id = p.getProperty('DOCS_FOLDER_ID');
+  if (id) { try { const f = DriveApp.getFolderById(id); if (!f.isTrashed()) return f; } catch (e) { /* 새로 만듦 */ } }
+  const it = DriveApp.getRootFolder().getFoldersByName(CONFIG.DOCS_FOLDER_NAME);
+  const folder = it.hasNext() ? it.next() : DriveApp.getRootFolder().createFolder(CONFIG.DOCS_FOLDER_NAME);
+  p.setProperty('DOCS_FOLDER_ID', folder.getId());
+  return folder;
+}
+
+function listFilesDeep_(folder, path, out) {
+  const files = folder.getFiles();
+  while (files.hasNext()) out.push({ file: files.next(), path: path });
+  const subs = folder.getFolders();
+  while (subs.hasNext()) {
+    const s = subs.next();
+    if (s.getName().charAt(0) === '_') continue;   // "_"로 시작하는 폴더는 건너뜀
+    listFilesDeep_(s, path ? path + '/' + s.getName() : s.getName(), out);
+  }
+  return out;
+}
+
+/** 1시간마다 자동 실행: 문서 폴더의 새 파일·바뀐 파일을 읽어 둔다 */
+function indexDocs() { return indexDocs_(CONFIG.INDEX_BUDGET_MS); }
+
+function indexDocs_(budgetMs) {
+  const props = PropertiesService.getScriptProperties();
+  const busy = Number(props.getProperty('INDEX_BUSY') || 0);
+  if (Date.now() - busy < 6 * 60 * 1000) return { busy: true, done: 0, pending: 0, errors: 0, removed: 0 };
+  props.setProperty('INDEX_BUSY', String(Date.now()));
+  const started = Date.now();
+  try {
+    const dsh = sheet_(SH.DOCS), csh = sheet_(SH.CHUNKS);
+    const dn = dsh.getLastRow() - 1;
+    const drows = dn > 0 ? dsh.getRange(2, 1, dn, DOC_HEADERS.length).getValues() : [];
+    const idx = {};
+    drows.forEach((r, i) => { idx[String(r[0])] = { row: i + 2, mod: String(r[3]), status: String(r[6]) }; });
+
+    const list = listFilesDeep_(getDocsFolder_(), '', []);
+    const seen = {};
+    let done = 0, pending = 0, errors = 0;
+    list.forEach(item => {
+      const f = item.file, id = f.getId();
+      seen[id] = true;
+      const mod = fmt_(f.getLastUpdated(), 'yyyy-MM-dd HH:mm:ss');
+      const cur = idx[id];
+      if (cur && cur.mod === mod) return;                       // 바뀌지 않음
+      if (Date.now() - started > budgetMs) { pending++; return; } // 다음 차례에
+
+      const kind = kindOf_(f);
+      let segs = [], status = '완료';
+      try {
+        if (kind.indexOf('미지원') === 0) status = kind;
+        else { segs = extractSegments_(f, kind); if (!segs.some(s => s.text.trim())) status = '글자 없음'; }
+      } catch (e) { status = '실패: ' + String(e && e.message || e).slice(0, 80); }
+
+      removeChunks_(csh, id);
+      const name = item.path ? item.path + '/' + f.getName() : f.getName();
+      const chunks = chunkSegments_(segs);
+      if (chunks.length) {
+        csh.getRange(csh.getLastRow() + 1, 1, chunks.length, CHUNK_HEADERS.length)
+          .setValues(chunks.map((c, i) => [id, name, i + 1, c.loc, c.text]));
+      }
+      const row = [id, name, kind.indexOf('미지원') === 0 ? '미지원' : kind, mod, chunks.length,
+        fmt_(new Date(), 'yyyy-MM-dd HH:mm'), status, f.getUrl()];
+      if (cur) dsh.getRange(cur.row, 1, 1, row.length).setValues([row]);
+      else dsh.appendRow(row);
+      if (status === '완료') done++; else errors++;
+    });
+
+    // 폴더에서 빠진 파일 정리
+    const gone = Object.keys(idx).filter(id => !seen[id]);
+    gone.forEach(id => removeChunks_(csh, id));
+    gone.map(id => idx[id].row).sort((a, b) => b - a).forEach(r => dsh.deleteRow(r));
+    return { busy: false, done: done, pending: pending, errors: errors, removed: gone.length };
+  } finally {
+    props.deleteProperty('INDEX_BUSY');
+  }
+}
+
+function kindOf_(f) {
+  const m = f.getMimeType(), n = f.getName().toLowerCase();
+  if (m === MimeType.GOOGLE_DOCS) return '구글문서';
+  if (m === MimeType.GOOGLE_SHEETS) return '구글시트';
+  if (m === MimeType.GOOGLE_SLIDES) return '구글슬라이드';
+  if (m === MimeType.PDF || /\.pdf$/.test(n)) return 'PDF';
+  if (/wordprocessingml|msword/.test(m) || /\.docx?$/.test(n)) return '워드';
+  if (/spreadsheetml|ms-excel/.test(m) || /\.xlsx?$/.test(n)) return '엑셀';
+  if (/presentationml|ms-powerpoint/.test(m) || /\.pptx?$/.test(n)) return '파워포인트';
+  if (/^image\/(jpeg|png|gif|bmp|webp)/.test(m)) return '이미지';
+  if (/^text\//.test(m) || /\.(txt|csv|md)$/.test(n)) return '텍스트';
+  if (/\.hwpx?$/.test(n) || /hwp/.test(m)) return '미지원(한글 HWP는 PDF로 저장해 넣어 주세요)';
+  return '미지원(' + (n.split('.').pop() || m) + ')';
+}
+
+/** 파일 → [{loc, text}] 조각 전 단계 */
+function extractSegments_(f, kind) {
+  const id = f.getId();
+  switch (kind) {
+    case '구글문서': return [{ loc: '', text: DocumentApp.openById(id).getBody().getText() }];
+    case '구글시트': return sheetSegments_(SpreadsheetApp.openById(id));
+    case '구글슬라이드': return slideSegments_(SlidesApp.openById(id));
+    case '텍스트': return [{ loc: '', text: f.getBlob().getDataAsString('UTF-8') }];
+    case '워드': return withConverted_(f, MimeType.GOOGLE_DOCS, tid => [{ loc: '', text: DocumentApp.openById(tid).getBody().getText() }]);
+    case '엑셀': return withConverted_(f, MimeType.GOOGLE_SHEETS, tid => sheetSegments_(SpreadsheetApp.openById(tid)));
+    case '파워포인트': return withConverted_(f, MimeType.GOOGLE_SLIDES, tid => slideSegments_(SlidesApp.openById(tid)));
+    case '이미지': return withConverted_(f, MimeType.GOOGLE_DOCS, tid => [{ loc: '이미지 글자', text: DocumentApp.openById(tid).getBody().getText() }]);
+    case 'PDF': {
+      let segs = [];
+      try { segs = withConverted_(f, MimeType.GOOGLE_DOCS, tid => [{ loc: '', text: DocumentApp.openById(tid).getBody().getText() }]); }
+      catch (e) { segs = []; }
+      const len = segs.reduce((s, x) => s + x.text.replace(/\s/g, '').length, 0);
+      if (len >= 200) return segs;
+      return pdfSegmentsByClaude_(f);   // 스캔 PDF·도면 등 글자를 못 뽑은 경우
+    }
+  }
+  return [];
+}
+
+/** 드라이브에서 구글 형식으로 변환한 임시 사본을 만들어 읽고 곧바로 휴지통으로 */
+function withConverted_(f, targetMime, reader) {
+  const url = 'https://www.googleapis.com/drive/v3/files/' + f.getId() + '/copy?ocrLanguage=ko&supportsAllDrives=true&fields=id';
+  const res = UrlFetchApp.fetch(url, {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+    payload: JSON.stringify({ name: '_lobby_임시_' + f.getName(), mimeType: targetMime, parents: ['root'] }),
+  });
+  if (res.getResponseCode() !== 200) throw new Error('변환 실패(' + res.getResponseCode() + ')');
+  const tid = JSON.parse(res.getContentText()).id;
+  try { return reader(tid); }
+  finally { try { DriveApp.getFileById(tid).setTrashed(true); } catch (e) { /* 무시 */ } }
+}
+
+function sheetSegments_(ss) {
+  return ss.getSheets().map(s => {
+    const v = s.getDataRange().getDisplayValues().slice(0, 3000);
+    const lines = v.map(row => {
+      let r = row.slice(); while (r.length && String(r[r.length - 1]).trim() === '') r.pop();
+      return r.join(' | ');
+    }).filter(l => l.replace(/[\s|]/g, ''));
+    return { loc: '시트 ' + s.getName(), text: lines.join('\n') };
+  }).filter(s => s.text);
+}
+
+function slideSegments_(pres) {
+  return pres.getSlides().map((sl, i) => {
+    const t = [];
+    sl.getShapes().forEach(sh => { try { const s = sh.getText().asString().trim(); if (s) t.push(s); } catch (e) { /* 글상자 아님 */ } });
+    sl.getTables().forEach(tb => {
+      for (let r = 0; r < tb.getNumRows(); r++) {
+        const cells = [];
+        for (let c = 0; c < tb.getNumColumns(); c++) { try { cells.push(tb.getCell(r, c).getText().asString().trim()); } catch (e) { cells.push(''); } }
+        t.push(cells.join(' | '));
+      }
+    });
+    return { loc: '슬라이드 ' + (i + 1), text: t.join('\n') };
+  }).filter(s => s.text);
+}
+
+function pdfSegmentsByClaude_(f) {
+  const bytes = f.getBlob().getBytes();
+  if (bytes.length > CONFIG.PDF_AI_MAX_MB * 1024 * 1024) throw new Error('PDF가 ' + CONFIG.PDF_AI_MAX_MB + 'MB를 넘어 읽지 못했습니다');
+  const content = [
+    { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: Utilities.base64Encode(bytes) } },
+    { type: 'text', text: '이 PDF의 글자를 빠짐없이 옮겨 적어라. 각 페이지 시작에 [p.번호]를 붙인다. 표는 한 행을 "칸 | 칸 | 칸" 한 줄로 적는다. 도면의 치수·공차·주석·표제란도 적는다. 요약·설명 없이 원문만 출력.' },
+  ];
+  const txt = callClaude_('너는 문서 전사 도구다. 원문을 정확히 옮겨 적는다.', content, 8000);
+  const parts = txt.split(/\[p\.(\d+)\]/);
+  const segs = [];
+  if (parts[0].trim()) segs.push({ loc: '', text: parts[0] });
+  for (let i = 1; i < parts.length; i += 2) segs.push({ loc: 'p.' + parts[i], text: parts[i + 1] || '' });
+  return segs;
+}
+
+function chunkSegments_(segs) {
+  const out = [], size = CONFIG.CHUNK_SIZE, ov = CONFIG.CHUNK_OVERLAP;
+  segs.forEach(sg => {
+    const text = String(sg.text || '').replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim();
+    if (!text) return;
+    if (text.length <= size) { out.push({ loc: sg.loc, text: text }); return; }
+    let pos = 0, part = 1;
+    while (pos < text.length) {
+      let end = Math.min(text.length, pos + size);
+      if (end < text.length) {
+        const nl = text.lastIndexOf('\n', end);
+        if (nl > pos + size * 0.6) end = nl;
+      }
+      out.push({ loc: (sg.loc ? sg.loc + ' · ' : '') + '구간 ' + part, text: text.slice(pos, end).trim() });
+      if (end >= text.length) break;
+      pos = Math.max(end - ov, pos + 1); part++;
+    }
+  });
+  return out.map(c => ({ loc: c.loc, text: c.text.slice(0, 45000) }));
+}
+
+function removeChunks_(csh, fileId) {
+  const n = csh.getLastRow() - 1;
+  if (n < 1) return;
+  const rows = csh.getRange(2, 1, n, 1).createTextFinder(String(fileId)).matchEntireCell(true).findAll()
+    .map(r => r.getRow()).sort((a, b) => a - b);
+  if (!rows.length) return;
+  const groups = [];
+  rows.forEach(r => { const g = groups[groups.length - 1]; if (g && r === g[0] + g[1]) g[1]++; else groups.push([r, 1]); });
+  groups.reverse().forEach(g => csh.deleteRows(g[0], g[1]));
+}
+
+function getDocNames_() {
+  const sh = sheet_(SH.DOCS);
+  const n = sh.getLastRow() - 1;
+  if (n < 1) return [];
+  return sh.getRange(2, 2, n, 1).getValues().map(r => String(r[0])).filter(Boolean).slice(0, 120);
+}
+
+/** 문서 조각 검색: 키워드가 많이 맞는 조각을 골라 Claude에게 넘긴다 */
+function searchDocs_(keywords, files, q) {
+  const sh = sheet_(SH.CHUNKS);
+  const n = sh.getLastRow() - 1;
+  if (n < 1) return [];
+  let kws = (keywords || []).map(k => String(k).trim()).filter(k => k.length >= 2);
+  if (!kws.length) kws = String(q).split(/[\s,.?!]+/).filter(k => k.length >= 2).slice(0, 6);
+  kws = kws.filter((k, i) => kws.indexOf(k) === i).slice(0, 10);
+
+  const names = sh.getRange(2, 2, n, 1).getValues().map(r => String(r[0]));
+  const want = (files || []).map(String).filter(Boolean);
+  const fileOk = row => !want.length || want.some(w => names[row - 2].indexOf(w) >= 0 || w.indexOf(names[row - 2]) >= 0);
+
+  const body = sh.getRange(2, 5, n, 1);
+  const score = {};
+  kws.forEach(k => {
+    const hits = body.createTextFinder(k).matchCase(false).findAll();
+    if (!hits.length) return;
+    const w = 1 / Math.log(2 + hits.length / 5);      // 흔한 단어는 가중치를 낮춤
+    hits.forEach(h => { const r = h.getRow(); score[r] = (score[r] || 0) + w; });
+    names.forEach((nm, i) => { if (nm.toLowerCase().indexOf(k.toLowerCase()) >= 0 && score[i + 2]) score[i + 2] += 0.5; });
+  });
+  let rows = Object.keys(score).map(Number).filter(fileOk).sort((a, b) => score[b] - score[a]);
+  if (!rows.length && want.length) {                  // 지목한 문서가 있으면 앞부분이라도
+    rows = names.map((nm, i) => i + 2).filter(fileOk).slice(0, CONFIG.MAX_DOC_CHUNKS_TO_AI);
+  }
+  const docsIdx = docLinks_();
+  return rows.slice(0, CONFIG.MAX_DOC_CHUNKS_TO_AI).map((r, i) => {
+    const v = sh.getRange(r, 1, 1, CHUNK_HEADERS.length).getValues()[0];
+    return { key: 'D' + (i + 1), 파일ID: String(v[0]), 파일명: String(v[1]), 조각: v[2], 위치: String(v[3] || ''),
+      본문: String(v[4]).slice(0, 2400), 링크: docsIdx[String(v[0])] || '' };
+  });
+}
+
+function docLinks_() {
+  const sh = sheet_(SH.DOCS);
+  const n = sh.getLastRow() - 1;
+  const o = {};
+  if (n > 0) sh.getRange(2, 1, n, DOC_HEADERS.length).getValues().forEach(r => { o[String(r[0])] = String(r[7]); });
+  return o;
+}
+
+function actDocs_() {
+  const sh = sheet_(SH.DOCS);
+  const n = sh.getLastRow() - 1;
+  const rows = n > 0 ? sh.getRange(2, 1, n, DOC_HEADERS.length).getValues().map(r => ({
+    파일ID: String(r[0]), 파일명: String(r[1]), 형식: String(r[2]), 수정일시: cellStr_(r[3]),
+    조각수: Number(r[4]) || 0, 읽은일시: cellStr_(r[5]), 상태: String(r[6]), 링크: String(r[7]),
+  })) : [];
+  rows.sort((a, b) => a.파일명.localeCompare(b.파일명));
+  return { docs: rows, folderUrl: getDocsFolder_().getUrl(), folderName: CONFIG.DOCS_FOLDER_NAME };
+}
+
+function actReindex_() {
+  const r = indexDocs_(40000);   // 앱에서 누르면 40초만 읽고, 남은 건 자동 실행이 이어서
+  return Object.assign(r, actDocs_());
+}
+
+// ───────────────────────── 보고서 · 예약 작업 ─────────────────────────
+/** 15분마다 자동 실행: 시간이 된 예약(밤 10시 보고서 포함)을 수행 */
+function runScheduler() {
+  const now = new Date();
+  const nowStr = fmt_(now, 'yyyy-MM-dd HH:mm');
+  getTasks_().forEach(t => {
+    if (t.활성 !== 'Y') return;
+    if (!t.다음실행) { t.다음실행 = nextRun_(t, now); saveTaskRow_(t); return; }
+    if (t.다음실행 > nowStr) return;
+    try { runTask_(t); }
+    catch (e) { saveReport_({ 종류: '오류', 제목: t.이름 + ' 실행 실패', 음성요약: '', 상세: String(e && e.message || e), 예약ID: t.ID }); }
+    t.마지막실행 = nowStr;
+    if (t.반복 === '한번') { t.활성 = 'N'; t.다음실행 = ''; }
+    else t.다음실행 = nextRun_(t, new Date(now.getTime() + 60000));
+    saveTaskRow_(t);
+  });
+}
+
+function runTask_(t) {
+  if (t.요청 === '__DAILY__') return buildDailyReport_(fmt_(new Date(), 'yyyy-MM-dd'));
+  const plan = makePlan_(t.요청, []);
+  plan.의도 = '질문';
+  const a = answer_(t.요청, plan, []);
+  return saveReport_({ 종류: '예약', 제목: t.이름, 음성요약: a.speech, 상세: a.detail, 예약ID: t.ID });
+}
+
+/** 오늘 하루 기록으로 저녁 보고서를 만든다 (편집기에서 testDailyReport로 바로 시험 가능) */
+function buildDailyReport_(dateStr) {
+  const all = getRecords_().filter(r => r.상태 !== '삭제');
+  const today = all.filter(r => r.대상일 === dateStr || String(r.입력일시).slice(0, 10) === dateStr);
+  const upcoming = all.filter(r => /일정/.test(r.유형) && r.상태 === '예정' && r.대상일 > dateStr && r.대상일 <= ymdAdd_(dateStr, 7))
+    .sort((a, b) => (a.대상일 + a.대상시각).localeCompare(b.대상일 + b.대상시각));
+  const spend = today.filter(r => r.유형 === '지출' && typeof r.금액 === 'number');
+  const month = dateStr.slice(0, 7);
+  const monthSpend = all.filter(r => r.유형 === '지출' && typeof r.금액 === 'number' && dayOf_(r).slice(0, 7) === month)
+    .reduce((s, r) => s + r.금액, 0);
+  const byType = {};
+  today.forEach(r => { byType[r.유형] = (byType[r.유형] || 0) + 1; });
+  const stats = { 기록건수: today.length, 유형별: byType, 오늘지출건수: spend.length,
+    오늘지출합계: spend.reduce((s, r) => s + r.금액, 0), 이번달지출합계: monthSpend, 다가오는일정수: upcoming.length };
+  const title = dateLabel_(dateStr) + ' 하루 정리';
+
+  if (!today.length && !upcoming.length) {
+    return saveReport_({ 종류: '일일', 제목: title,
+      음성요약: '카일님, 오늘은 남기신 기록이 없습니다. 편안한 밤 보내세요.',
+      상세: '• 오늘 기록 0건\n• 7일 안의 예정 일정 없음' });
+  }
+  const pick = r => ({ ID: r.ID, 날짜: r.대상일, 시각: r.대상시각, 유형: r.유형, 분류: r.분류, 제목: r.제목, 내용: r.내용, 금액: r.금액, 인물: r.인물, 장소: r.장소 });
+  const sys = [
+    '너는 카일님의 개인 비서 Lobby다. 오늘 하루 기록으로 저녁 보고서를 쓴다.',
+    '오늘: ' + dateLabel_(dateStr),
+    '규칙:',
+    '- 숫자는 [통계] 값을 그대로 쓴다. 기록에 없는 일은 지어내지 않는다.',
+    '- 음성: 존댓말 3~4문장. "카일님, 오늘 하루 정리해 드립니다."로 시작하고, 가장 중요한 일 → 지출 → 내일 일정 순으로 짧게.',
+    '- 상세: 아래 제목 순서로, 해당 내용이 없는 제목은 생략. 목록은 "• "로 시작. 금액은 12,000원 형식.',
+    '  ■ 오늘 한 일 / ■ 지출 (오늘 합계, 이번 달 누적) / ■ 업무·특이점 / ■ 떠오른 아이디어 / ■ 다가오는 일정 (7일) / ■ Lobby의 한마디 (내일을 위한 짧은 제안 1줄)',
+    '반드시 JSON만 출력: {"음성":"","상세":""}',
+  ].join('\n');
+  const payload = { 통계: stats, 오늘기록: today.map(pick), 다가오는일정: upcoming.slice(0, 15).map(pick) };
+  const ans = extractJson_(callClaude_(sys, JSON.stringify(payload), 1500));
+  return saveReport_({ 종류: '일일', 제목: title, 음성요약: ans.음성 || '', 상세: ans.상세 || '' });
+}
+
+function testDailyReport() { const r = buildDailyReport_(fmt_(new Date(), 'yyyy-MM-dd')); Logger.log(r.음성요약 + '\n\n' + r.상세); }
+
+function saveReport_(o) {
+  const r = { ID: 'R' + fmt_(new Date(), 'yyyyMMddHHmmss') + Math.floor(Math.random() * 90 + 10),
+    생성일시: fmt_(new Date(), 'yyyy-MM-dd HH:mm'), 종류: o.종류 || '일일', 제목: o.제목 || '',
+    음성요약: o.음성요약 || '', 상세: o.상세 || '', 읽음: 'N', 예약ID: o.예약ID || '' };
+  sheet_(SH.REPORT).appendRow(REPORT_HEADERS.map(h => r[h]));
+  return r;
+}
+
+function getReports_(limit) {
+  const sh = sheet_(SH.REPORT);
+  const n = sh.getLastRow() - 1;
+  if (n < 1) return [];
+  const take = Math.min(n, limit || 60);
+  const v = sh.getRange(n + 2 - take, 1, take, REPORT_HEADERS.length).getValues();
+  return v.reverse().map(r => REPORT_HEADERS.reduce((o, h, i) => (o[h] = cellStr_(r[i]), o), {}));
+}
+
+function actReports_() { return { reports: getReports_(60), tasks: getTasks_().map(stripRow_) }; }
+
+function actReadReport_(req) {
+  const sh = sheet_(SH.REPORT);
+  const n = sh.getLastRow() - 1;
+  if (n < 1) return {};
+  const ids = sh.getRange(2, 1, n, 1).getValues().map(r => String(r[0]));
+  (req.ids || [req.id]).forEach(id => { const i = ids.indexOf(String(id)); if (i >= 0) sh.getRange(i + 2, 7).setValue('Y'); });
+  return {};
+}
+
+function actDeleteReport_(req) {
+  const sh = sheet_(SH.REPORT);
+  const n = sh.getLastRow() - 1;
+  if (n < 1) return {};
+  const i = sh.getRange(2, 1, n, 1).getValues().map(r => String(r[0])).indexOf(String(req.id));
+  if (i >= 0) sh.deleteRow(i + 2);
+  return { deleted: req.id };
+}
+
+function actRunDaily_() { return { report: buildDailyReport_(fmt_(new Date(), 'yyyy-MM-dd')) }; }
+
+function actSaveTask_(req) {
+  const t = normalizeTask_(req.task || {});
+  if (!t.요청) throw new Error('예약할 요청 내용이 비어 있습니다.');
+  if (t.반복 === '매주' && !t.요일) throw new Error('매주 반복은 요일을 골라 주세요.');
+  if (t.반복 === '한번' && !/^\d{4}-\d{2}-\d{2}$/.test(t.날짜)) throw new Error('한 번 실행할 날짜를 골라 주세요.');
+  const old = getTasks_().filter(x => x.ID === t.ID)[0];
+  if (old && old.ID === DAILY_ID) t.요청 = '__DAILY__';
+  if (!t.ID) t.ID = 'T' + fmt_(new Date(), 'yyyyMMddHHmmss');
+  if (old) { t._row = old._row; t.마지막실행 = old.마지막실행; }
+  t.다음실행 = t.활성 === 'Y' ? nextRun_(t, new Date()) : '';
+  saveTaskRow_(t);
+  return { task: stripRow_(t), tasks: getTasks_().map(stripRow_) };
+}
+
+function actDeleteTask_(req) {
+  if (req.id === DAILY_ID) throw new Error('오늘의 보고서는 지울 수 없습니다. 끄기만 할 수 있습니다.');
+  const t = getTasks_().filter(x => x.ID === req.id)[0];
+  if (t) sheet_(SH.TASKS).deleteRow(t._row);
+  return { tasks: getTasks_().map(stripRow_) };
+}
+
+function normalizeTask_(x) {
+  const days = Array.isArray(x.요일) ? x.요일 : String(x.요일 || '').split(/[,\s·/]+/);
+  const t = {
+    ID: String(x.ID || ''), 이름: String(x.이름 || '').slice(0, 30) || '예약 작업',
+    반복: REPEATS.indexOf(x.반복) >= 0 ? x.반복 : '매일',
+    요일: days.map(d => String(d).trim().charAt(0)).filter(d => WEEKDAYS.indexOf(d) >= 0)
+      .sort((a, b) => WEEKDAYS.indexOf(a) - WEEKDAYS.indexOf(b)).join(','),
+    날짜: String(x.날짜 == null ? '' : x.날짜).trim(), 시각: normTime_(x.시각) || '09:00',
+    요청: String(x.요청 || '').trim(), 활성: x.활성 === 'N' || x.활성 === false ? 'N' : 'Y',
+    마지막실행: String(x.마지막실행 || ''), 다음실행: String(x.다음실행 || ''),
+  };
+  if (t.반복 !== '매주') t.요일 = '';
+  if (t.반복 === '매일') t.날짜 = '';
+  return t;
+}
+
+function describeTask_(t) {
+  const when = t.반복 === '매일' ? '매일' : t.반복 === '매주' ? '매주 ' + t.요일.replace(/,/g, '·') + '요일'
+    : t.반복 === '매월' ? '매월 ' + t.날짜 + '일' : dateLabel_(t.날짜);
+  const [h, m] = t.시각.split(':').map(Number);
+  const time = (h < 12 ? '오전 ' : '오후 ') + ((h % 12) || 12) + '시' + (m ? ' ' + m + '분' : '');
+  return when + ' ' + time + '에 "' + t.요청 + '"을(를) 수행합니다.';
+}
+
+function getTasks_() {
+  const sh = sheet_(SH.TASKS);
+  if (!sh) return [];
+  const n = sh.getLastRow() - 1;
+  if (n < 1) return [];
+  return sh.getRange(2, 1, n, TASK_HEADERS.length).getValues().map((r, i) => {
+    const o = TASK_HEADERS.reduce((a, h, j) => (a[h] = cellStr_(r[j], h), a), {});
+    o._row = i + 2;
+    return o;
+  }).filter(t => t.ID);
+}
+
+function saveTaskRow_(t) {
+  const sh = sheet_(SH.TASKS);
+  const row = TASK_HEADERS.map(h => t[h] == null ? '' : String(t[h]));
+  if (t._row) sh.getRange(t._row, 1, 1, row.length).setValues([row]);
+  else sh.getRange(sh.getLastRow() + 1, 1, 1, row.length).setValues([row]);
+}
+
+function stripRow_(t) { const o = Object.assign({}, t); delete o._row; return o; }
+
+function nextRun_(t, from) {
+  const nowStr = fmt_(from, 'yyyy-MM-dd HH:mm');
+  const d0 = nowStr.slice(0, 10);
+  const time = normTime_(t.시각) || '09:00';
+  if (t.반복 === '한번') { const c = String(t.날짜) + ' ' + time; return c > nowStr ? c : ''; }
+  const days = String(t.요일 || '').split(',').filter(Boolean);
+  for (let i = 0; i < 400; i++) {
+    const d = ymdAdd_(d0, i);
+    let ok = t.반복 === '매일';
+    if (t.반복 === '매주') ok = days.indexOf(weekdayOf_(d)) >= 0;
+    if (t.반복 === '매월') { const want = Number(t.날짜) || 1; ok = Number(d.slice(8)) === Math.min(want, lastDom_(d)); }
+    if (ok) { const c = d + ' ' + time; if (c > nowStr) return c; }
+  }
+  return '';
+}
+
+function normTime_(s) {
+  const m = String(s || '').match(/(\d{1,2})\s*[:시]\s*(\d{1,2})?/);
+  if (!m) return '';
+  let h = Math.min(23, Number(m[1]));
+  const mi = Math.min(59, Number(m[2] || 0));
+  if (/오후|저녁|밤/.test(String(s)) && h < 12) h += 12;
+  return ('0' + h).slice(-2) + ':' + ('0' + mi).slice(-2);
+}
+function ymdAdd_(s, n) { const d = Utilities.parseDate(s + ' 12:00', CONFIG.TZ, 'yyyy-MM-dd HH:mm'); return fmt_(new Date(d.getTime() + n * 86400000), 'yyyy-MM-dd'); }
+function weekdayOf_(s) { const d = Utilities.parseDate(s + ' 12:00', CONFIG.TZ, 'yyyy-MM-dd HH:mm'); return WEEKDAYS[Number(fmt_(d, 'u')) - 1]; }
+function lastDom_(s) { return new Date(Number(s.slice(0, 4)), Number(s.slice(5, 7)), 0).getDate(); }
+function dateLabel_(s) { return Number(s.slice(5, 7)) + '월 ' + Number(s.slice(8, 10)) + '일(' + weekdayOf_(s) + ')'; }
 
 // ───────────────────────── 수정&삭제 탭 ─────────────────────────
 function actList_(req) {
@@ -400,8 +973,7 @@ function actDelete_(req) {
 function actRestore_(req) {
   return withRow_(req.id, (sh, rowIdx, cur) => {
     const now = fmt_(new Date(), 'yyyy-MM-dd HH:mm');
-    // 삭제 직전 상태 찾기
-    const hs = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SH.HISTORY);
+    const hs = sheet_(SH.HISTORY);
     const n = hs.getLastRow() - 1;
     let prev = '정상';
     if (n > 0) {
@@ -421,7 +993,7 @@ function withRow_(id, fn) {
   if (!id) throw new Error('기록 ID가 없습니다.');
   const lock = LockService.getScriptLock(); lock.waitLock(20000);
   try {
-    const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SH.RECORD);
+    const sh = sheet_(SH.RECORD);
     const n = sh.getLastRow() - 1;
     if (n < 1) throw new Error('기록이 없습니다.');
     const ids = sh.getRange(2, 1, n, 1).getValues().map(r => String(r[0]));
@@ -436,14 +1008,13 @@ function withRow_(id, fn) {
 }
 
 function appendHistory_(rows) {
-  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SH.HISTORY);
+  const sh = sheet_(SH.HISTORY);
   sh.getRange(sh.getLastRow() + 1, 1, rows.length, 6).setValues(rows);
 }
 
 /** 매일 새벽 4시: 삭제 후 30일 지난 기록을 휴지통 탭으로 옮김 */
 function purgeTrash() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sh = ss.getSheetByName(SH.RECORD), tr = ss.getSheetByName(SH.TRASH);
+  const sh = sheet_(SH.RECORD), tr = sheet_(SH.TRASH);
   const n = sh.getLastRow() - 1;
   if (n < 1) return;
   const limit = fmt_(new Date(Date.now() - CONFIG.TRASH_DAYS * 86400000), 'yyyy-MM-dd HH:mm');
@@ -458,7 +1029,7 @@ function purgeTrash() {
 
 // ───────────────────────── 공통 유틸 ─────────────────────────
 function getRecords_() {
-  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SH.RECORD);
+  const sh = sheet_(SH.RECORD);
   const n = sh.getLastRow() - 1;
   if (n < 1) return [];
   return sh.getRange(2, 1, n, REC_HEADERS.length).getValues().filter(r => r[0]).map(toObj_);
@@ -472,8 +1043,8 @@ function toObj_(r) {
 
 function cellStr_(v, h) {
   if (v instanceof Date) {
-    if (h === '대상시각') return fmt_(v, 'HH:mm');
-    if (h === '대상일') return fmt_(v, 'yyyy-MM-dd');
+    if (h === '대상시각' || h === '시각') return fmt_(v, 'HH:mm');
+    if (h === '대상일' || h === '날짜') return fmt_(v, 'yyyy-MM-dd');
     return fmt_(v, 'yyyy-MM-dd HH:mm');
   }
   return v == null ? '' : String(v);
@@ -487,14 +1058,14 @@ function recent_(n) {
 }
 
 function getCategories_() {
-  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SH.CATEGORY);
+  const sh = sheet_(SH.CATEGORY);
   const n = sh.getLastRow() - 1;
   if (n < 1) return [];
   return sh.getRange(2, 1, n, 2).getValues().filter(r => r[0]).map(r => ({ name: String(r[0]).trim(), desc: String(r[1]) }));
 }
 
 function getProfile_() {
-  const sh = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SH.PROFILE);
+  const sh = sheet_(SH.PROFILE);
   const n = sh.getLastRow() - 1;
   if (n < 1) return {};
   const o = {};
@@ -504,11 +1075,10 @@ function getProfile_() {
 
 function dateContext_() {
   const now = new Date();
-  const wd = ['월', '화', '수', '목', '금', '토', '일'];
   const u = Number(fmt_(now, 'u'));            // 1=월 … 7=일
   const monday = new Date(now.getTime() - (u - 1) * 86400000);
   const sunday = new Date(monday.getTime() + 6 * 86400000);
-  return '오늘: ' + fmt_(now, 'yyyy-MM-dd') + ' (' + wd[u - 1] + '요일), 현재 ' + fmt_(now, 'HH:mm') +
+  return '오늘: ' + fmt_(now, 'yyyy-MM-dd') + ' (' + WEEKDAYS[u - 1] + '요일), 현재 ' + fmt_(now, 'HH:mm') +
     '. 이번 주: ' + fmt_(monday, 'yyyy-MM-dd') + ' ~ ' + fmt_(sunday, 'yyyy-MM-dd') + ' (월~일).';
 }
 
@@ -533,6 +1103,7 @@ function mask_(s) {
     .replace(/\b\d{2,6}-\d{2,6}-\d{4,8}\b/g, m => m.slice(0, 3) + '***');
 }
 
+/** user는 문자열 또는 content 배열(PDF 등) */
 function callClaude_(system, user, maxTokens) {
   const key = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
   if (!key) throw new Error('스크립트 속성에 ANTHROPIC_API_KEY가 없습니다.');

@@ -389,7 +389,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('lobby.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('lobby.' + k, JSON.stringify(v)); } catch {} },
 };
-const DEFAULT_URL = 'https://script.google.com/macros/library/d/1M0sPVT6wlgysAHyoBEk498KFKNcMnw2RQaUvJSOG1kck4FFRMJQywHQz/4';
+const DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbxnjH1Ks4btLKmHOQaYgN9-gh_2LbPQSpMEoe1I7Zs-GSAbTmqEM6uyN-a7SgTiNMA16g/exec';
 const DEFAULT_WAKE = '안녕 로비, 헤이 로비, 로비야, 로비, lobby';
 const WEEK = ['월','화','수','목','금','토','일'];
 const S = {
