@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0E1116">
+<meta name="theme-color" content="#F6F4EF">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>Lobby</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
@@ -16,16 +16,16 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 :root{
-  --bg:#0E1116; --bg2:#12161D; --surface:#171B22; --raised:#1F2530; --line:#2A313D;
-  --ink:#EDEFF3; --muted:#8A93A3; --faint:#5C6474;
-  --brass:#D4A55A; --brass-deep:#A87C38; --brass-soft:rgba(212,165,90,.14);
-  --blue:#7FB0E8; --blue-soft:rgba(127,176,232,.14);
-  --cyan:#5FD4E8; --cyan-soft:rgba(95,212,232,.14);
-  --ok:#5DBB8A; --danger:#E0675C; --danger-soft:rgba(224,103,92,.14);
+  --bg:#F6F4EF; --bg2:#FFFFFF; --surface:#FFFFFF; --raised:#F1EDE4; --line:#E2DCCF;
+  --ink:#1E2430; --muted:#626C7C; --faint:#8F97A5;
+  --brass:#B07A1E; --brass-deep:#8C5F12; --brass-soft:rgba(176,122,30,.12);
+  --blue:#2F6FB5; --blue-soft:rgba(47,111,181,.12);
+  --cyan:#0E8FA8; --cyan-soft:rgba(14,143,168,.12);
+  --ok:#2E9468; --danger:#D14B3F; --danger-soft:rgba(209,75,63,.12);
   --sans:"IBM Plex Sans KR","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
   --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
   --sat:env(safe-area-inset-top,0px); --sab:env(safe-area-inset-bottom,0px);
-  color-scheme:dark;
+  color-scheme:light;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{height:100%}
@@ -38,7 +38,7 @@ a{color:inherit}
 
 /* ── 레이아웃 ── */
 .app{height:100%;display:grid;grid-template-rows:auto 1fr auto auto;max-width:560px;margin:0 auto}
-.top{padding:calc(14px + var(--sat)) 18px 10px;display:flex;align-items:center;gap:10px;background:linear-gradient(var(--bg),rgba(14,17,22,.92))}
+.top{padding:calc(14px + var(--sat)) 18px 10px;display:flex;align-items:center;gap:10px;background:linear-gradient(var(--bg),rgba(246,244,239,.92))}
 .mark{display:flex;align-items:baseline;gap:8px}
 .mark b{font-size:22px;letter-spacing:.02em;font-weight:700}
 .mark b i{font-style:normal;color:var(--brass)}
@@ -81,14 +81,14 @@ main{overflow-y:auto;padding:4px 18px 24px;-webkit-overflow-scrolling:touch}
 .stage{display:grid;justify-items:center;gap:12px;padding:18px 0 6px}
 .greet{font-size:13px;color:var(--muted);text-align:center}
 .greet b{color:var(--ink);font-weight:500}
-.mic{position:relative;width:128px;height:128px;border-radius:50%;border:0;background:radial-gradient(circle at 50% 40%,#2A2F39,#171B22 70%);box-shadow:0 0 0 1px var(--line),0 0 0 10px rgba(212,165,90,.05),0 10px 30px rgba(0,0,0,.45);display:grid;place-items:center;transition:transform .15s}
+.mic{position:relative;width:128px;height:128px;border-radius:50%;border:0;background:radial-gradient(circle at 50% 40%,#FFFFFF,#F1EDE4 70%);box-shadow:0 0 0 1px var(--line),0 0 0 10px rgba(212,165,90,.05),0 10px 30px rgba(0,0,0,.45);display:grid;place-items:center;transition:transform .15s}
 .mic:active{transform:scale(.97)}
 .mic::before{content:"";position:absolute;inset:6px;border-radius:50%;border:2px solid var(--brass);opacity:.8}
 .mic svg{width:40px;height:40px;stroke:var(--brass);fill:none;stroke-width:1.8}
 .mic.small{width:92px;height:92px}
 .mic.small svg{width:30px;height:30px}
 .mic.on::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--brass);animation:ring 1.4s ease-out infinite}
-.mic.on{background:radial-gradient(circle at 50% 40%,#3A3222,#1E1A12 70%)}
+.mic.on{background:radial-gradient(circle at 50% 40%,#FFF3D9,#F3DFB4 70%)}
 @keyframes ring{from{transform:scale(1);opacity:.8}to{transform:scale(1.35);opacity:0}}
 @media (prefers-reduced-motion:reduce){.mic.on::after{animation:none;opacity:.6}}
 .mic-hint{font-size:12.5px;color:var(--muted);min-height:20px;text-align:center}
@@ -98,7 +98,7 @@ main{overflow-y:auto;padding:4px 18px 24px;-webkit-overflow-scrolling:touch}
 .typebox{display:flex;gap:8px;align-items:flex-end;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:8px 8px 8px 14px}
 .typebox textarea{flex:1;background:none;border:0;resize:none;outline:none;min-height:24px;max-height:120px;padding:4px 0;line-height:1.5}
 .typebox textarea::placeholder{color:var(--faint)}
-.send{height:36px;padding:0 14px;border-radius:10px;border:0;background:var(--brass);color:#1A1408;font-weight:700;font-size:14px}
+.send{height:36px;padding:0 14px;border-radius:10px;border:0;background:var(--brass);color:#fff;font-weight:700;font-size:14px}
 .send:disabled{opacity:.4}
 
 /* ── 공통 카드 ── */
@@ -112,14 +112,14 @@ main{overflow-y:auto;padding:4px 18px 24px;-webkit-overflow-scrolling:touch}
 .chip.t{color:var(--brass);border-color:rgba(212,165,90,.4);background:var(--brass-soft)}
 .chip.c{color:var(--blue);border-color:rgba(127,176,232,.35);background:var(--blue-soft)}
 .chip.d{color:var(--cyan);border-color:rgba(95,212,232,.35);background:var(--cyan-soft)}
-.chip.new{color:#1A1408;background:var(--brass);border-color:var(--brass);font-weight:500}
+.chip.new{color:#fff;background:var(--brass);border-color:var(--brass);font-weight:500}
 .chip.st-예정{color:var(--blue)} .chip.st-완료{color:var(--ok)} .chip.st-취소{color:var(--faint);text-decoration:line-through}
 .date{font-family:var(--mono);font-size:12px;color:var(--muted)}
 .ttl{font-weight:500;flex:1 1 auto;min-width:0}
 .amt{font-family:var(--mono);font-size:13px;color:var(--ink);margin-left:auto;font-variant-numeric:tabular-nums}
 .body{color:var(--muted);font-size:13.5px;white-space:pre-wrap}
 .warn{font-size:13px;color:var(--brass);background:var(--brass-soft);border-radius:8px;padding:6px 10px}
-.err-txt{font-size:12.5px;color:#F3B2AB}
+.err-txt{font-size:12.5px;color:#B83A2E}
 .unread-dot{width:8px;height:8px;border-radius:50%;background:var(--danger);flex:0 0 auto}
 
 /* ── 폼 ── */
@@ -135,12 +135,12 @@ main{overflow-y:auto;padding:4px 18px 24px;-webkit-overflow-scrolling:touch}
 .check input{accent-color:var(--brass);width:18px;height:18px}
 .days{display:flex;gap:6px;flex-wrap:wrap}
 .days button{width:36px;height:32px;border-radius:8px;border:1px solid var(--line);background:var(--bg2);font-size:13px;color:var(--muted)}
-.days button[aria-pressed="true"]{background:var(--brass);border-color:var(--brass);color:#1A1408;font-weight:700}
+.days button[aria-pressed="true"]{background:var(--brass);border-color:var(--brass);color:#fff;font-weight:700}
 
 .btns{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;align-items:center}
 .btn{height:40px;padding:0 16px;border-radius:10px;border:1px solid var(--line);background:var(--raised);font-size:14px;font-weight:500;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;gap:6px}
 .btn.sm{height:32px;padding:0 11px;font-size:12.5px;border-radius:8px}
-.btn.pri{background:var(--brass);border-color:var(--brass);color:#1A1408;font-weight:700}
+.btn.pri{background:var(--brass);border-color:var(--brass);color:#fff;font-weight:700}
 .btn.del{color:var(--danger);border-color:rgba(224,103,92,.45);background:var(--danger-soft)}
 .btn.ghost{background:none}
 .btn:disabled{opacity:.45}
@@ -173,6 +173,21 @@ main{overflow-y:auto;padding:4px 18px 24px;-webkit-overflow-scrolling:touch}
 .doc-ev:last-child{border-bottom:0}
 .doc-ev a{color:var(--cyan);text-decoration:none;font-weight:500}
 .doc-ev small{color:var(--muted)}
+.todos{gap:6px}
+.todos h3{margin:0;font-size:13px;font-weight:500;color:var(--muted);display:flex;align-items:center;gap:8px}
+.todos h3 .n{font-family:var(--mono);color:var(--brass)}
+.todo{display:flex;align-items:flex-start;gap:10px;padding:7px 2px;border-top:1px solid var(--line);cursor:pointer}
+.todo:first-of-type{border-top:0}
+.todo input{width:20px;height:20px;margin:1px 0 0;accent-color:var(--brass);flex:0 0 auto}
+.todo .tx{flex:1;min-width:0}
+.todo .due{display:inline-block;margin-left:6px;font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.todo .due.late{color:var(--danger)} .todo .due.today{color:var(--brass)}
+.todo.done .tx{text-decoration:line-through;color:var(--faint)}
+.brief-wx{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.brief-wx b{font-size:26px;font-weight:500}
+.brief-sec{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;color:var(--brass);margin-top:2px}
+.brief-sch{display:flex;gap:10px;font-size:14px}
+.brief-sch time{font-family:var(--mono);color:var(--muted);min-width:44px}
 .suggest{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
 .suggest button{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:5px 12px;font-size:13px;color:var(--muted)}
 .banner{display:flex;align-items:center;gap:10px;border:1px solid rgba(212,165,90,.45);background:var(--brass-soft);border-radius:12px;padding:10px 12px;font-size:13.5px}
@@ -198,7 +213,7 @@ main{overflow-y:auto;padding:4px 18px 24px;-webkit-overflow-scrolling:touch}
 .filters{display:grid;gap:8px;position:sticky;top:0;background:var(--bg);padding:6px 0 10px;z-index:2}
 .seg{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
 .seg button{flex:0 0 auto;height:32px;padding:0 13px;border-radius:16px;border:1px solid var(--line);background:var(--surface);color:var(--muted);font-size:13px}
-.seg button[aria-pressed="true"]{background:var(--brass);border-color:var(--brass);color:#1A1408;font-weight:700}
+.seg button[aria-pressed="true"]{background:var(--brass);border-color:var(--brass);color:#fff;font-weight:700}
 .frow{display:grid;grid-template-columns:auto 1fr;gap:8px}
 .frow select,.frow input,.range input{background:var(--surface);border:1px solid var(--line);border-radius:10px;height:38px;padding:0 10px;outline:none;min-width:0}
 .range{display:grid;grid-template-columns:1fr auto 1fr;gap:6px;align-items:center;color:var(--muted)}
@@ -210,18 +225,18 @@ main{overflow-y:auto;padding:4px 18px 24px;-webkit-overflow-scrolling:touch}
 .empty{text-align:center;color:var(--faint);font-size:13.5px;padding:28px 0}
 
 /* ── 설정 · 토스트 · 로딩 ── */
-.sheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.55);display:grid;align-items:end;z-index:20}
+.sheet-bg{position:fixed;inset:0;background:rgba(30,36,48,.35);display:grid;align-items:end;z-index:20}
 .sheet{background:var(--surface);border-radius:18px 18px 0 0;padding:18px 18px calc(18px + var(--sab));display:grid;gap:14px;max-width:560px;width:100%;margin:0 auto;border-top:1px solid var(--line);max-height:92vh;overflow-y:auto}
 .sheet h2{margin:0;font-size:18px}
 .sheet p{margin:0;font-size:13px;color:var(--muted)}
-.toast{position:fixed;left:50%;bottom:calc(92px + var(--sab));transform:translateX(-50%);background:var(--raised);border:1px solid var(--line);padding:9px 16px;border-radius:20px;font-size:13.5px;z-index:30;box-shadow:0 8px 24px rgba(0,0,0,.4);max-width:90vw}
-.toast.err{border-color:var(--danger);color:#F3B2AB}
+.toast{position:fixed;left:50%;bottom:calc(92px + var(--sab));transform:translateX(-50%);background:var(--raised);border:1px solid var(--line);padding:9px 16px;border-radius:20px;font-size:13.5px;z-index:30;box-shadow:0 8px 24px rgba(30,36,48,.18);max-width:90vw}
+.toast.err{border-color:var(--danger);color:#B83A2E}
 .busy{display:flex;gap:10px;align-items:center;justify-content:center;color:var(--muted);font-size:13.5px;padding:10px}
 .dots{display:inline-flex;gap:4px}
 .dots i{width:6px;height:6px;border-radius:50%;background:var(--brass);animation:dot 1s infinite}
 .dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}
 @keyframes dot{0%,80%,100%{opacity:.25}40%{opacity:1}}
-.demo-badge{font-family:var(--mono);font-size:10.5px;color:#1A1408;background:var(--brass);border-radius:4px;padding:1px 6px}
+.demo-badge{font-family:var(--mono);font-size:10.5px;color:#fff;background:var(--brass);border-radius:4px;padding:1px 6px}
 @media (max-width:360px){.wake-btn .lbl{display:none}.wake-btn{padding:0 10px}}
 </style>
 </head>
@@ -257,11 +272,12 @@ main{overflow-y:auto;padding:4px 18px 24px;-webkit-overflow-scrolling:touch}
         <div class="live dim" id="liveTalk"></div>
       </div>
       <div class="suggest" id="suggest">
+        <button>오늘 브리핑 해 줘</button>
+        <button>오늘 할 일 뭐야?</button>
         <button>이번 주 일정 알려 줘</button>
-        <button>이번 달 지출 합계는?</button>
         <button>CR-747 승인원 검사 항목 알려 줘</button>
-        <button>매주 월요일 오전 8시에 이번 주 일정 정리해 줘</button>
       </div>
+      <div class="card todos" id="todoCard" hidden></div>
       <div class="typebox">
         <textarea id="txtTalk" rows="1" placeholder="기록·질문·예약을 입력"></textarea>
         <button class="send" id="sendTalk">보내기</button>
@@ -396,7 +412,7 @@ const S = {
   url: store.get('url', DEFAULT_URL), pin: store.get('pin', ''),
   rate: store.get('rate', 1), auto: store.get('auto', true), speak: store.get('speak', true),
   follow: store.get('follow', true), wakeWords: store.get('wake', DEFAULT_WAKE),
-  types: ['일상','지출','일정','업무일정','정보','특이점','아이디어'],
+  types: ['일상','지출','일정','업무일정','정보','특이점','아이디어','할일'],
   states: ['정상','예정','완료','취소'],
   categories: [], editPeriod: 'week', showDeleted: false, openId: null, confirmDel: null, list: [],
   cards: {}, tasksPending: {}, seq: 0, history: [],
@@ -550,7 +566,7 @@ async function saveCard(cid) {
     } else if (box) box.innerHTML = `<div class="card saved">✓ 저장했습니다 · ${r.ids.length}건</div>`;
     renderRecent(r.recent);
     toast(`저장했습니다 (${r.ids.length}건)`);
-    refreshCategories();
+    refreshCategories(); loadTodos();
     return true;
   } catch (e) { toast(e.message, true); if (btn) btn.disabled = false; return false; }
 }
@@ -651,6 +667,49 @@ function dropTask(tid) {
   if (el) el.outerHTML = '<div class="card saved" style="color:var(--muted)">예약하지 않았습니다</div>';
 }
 
+/* ═════════════ 할 일 · 브리핑 ═════════════ */
+function todoRowHTML(t, kind) {
+  const due = kind === 'late' ? `<span class="due late">기한 ${esc(shortDate(t.기한))} 지남</span>`
+    : kind === 'due' ? '<span class="due today">오늘까지</span>'
+    : t.기한 ? `<span class="due">${esc(shortDate(t.기한))}까지</span>` : '';
+  return `<label class="todo"><input type="checkbox" data-todo="${esc(t.ID)}"><span class="tx">${esc(t.제목)}${due}</span></label>`;
+}
+function todoListHTML(g) {
+  return [...(g.late || []).map(t => todoRowHTML(t, 'late')), ...(g.due || []).map(t => todoRowHTML(t, 'due')),
+    ...(g.later || []).slice(0, 5).map(t => todoRowHTML(t, 'later'))].join('');
+}
+async function loadTodos() {
+  const box = $('#todoCard');
+  try {
+    const g = await api('todos');
+    const n = (g.late || []).length + (g.due || []).length + (g.later || []).length;
+    if (!n) { box.hidden = true; return; }
+    box.innerHTML = `<h3>할 일 <span class="n">${n}</span></h3>${todoListHTML(g)}`;
+    box.hidden = false;
+  } catch { box.hidden = true; }
+}
+async function toggleTodo(input) {
+  const row = input.closest('.todo'), done = input.checked;
+  row.classList.toggle('done', done);
+  try {
+    await api('update', { id: input.dataset.todo, fields: { 상태: done ? '완료' : '예정' } });
+    toast(done ? '완료로 표시했습니다' : '다시 할 일로 되돌렸습니다');
+  } catch (e) { input.checked = !done; row.classList.toggle('done', !done); toast(e.message, true); }
+}
+function briefHTML(b) {
+  const w = b.날씨;
+  return `<div class="a-bub">
+    <div class="a-head">LOBBY · 브리핑<span class="sp"></span><button class="icon-btn" data-replay aria-label="다시 듣기" style="width:30px;height:30px">
+      <svg viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg></button></div>
+    <div class="speak">${esc(b.greet)}, 카일님. ${esc(b.날짜)}</div>
+    ${w ? `<div class="brief-wx"><b>${w.기온}°</b><span>${esc(w.지역)} · ${esc(w.날씨)} · 최고 ${w.최고}° / 최저 ${w.최저}°</span></div><div class="detail" style="border:0;padding:0">${esc(w.비)}</div>` : ''}
+    <div class="brief-sec">오늘 일정</div>
+    ${(b.일정 || []).length ? b.일정.map(x => `<div class="brief-sch"><time>${esc(x.시각 || '종일')}</time><span>${esc(x.제목)}</span></div>`).join('') : '<div class="detail" style="border:0;padding:0">오늘 잡힌 일정은 없습니다.</div>'}
+    <div class="brief-sec">할 일</div>
+    ${todoListHTML(b) || '<div class="detail" style="border:0;padding:0">남은 할 일이 없습니다 👍</div>'}
+  </div>`;
+}
+
 async function talk(text, voice = false) {
   text = String(text || '').trim();
   if (!text) return;
@@ -670,6 +729,16 @@ async function talk(text, voice = false) {
   }
   const slot = wrap.querySelector('.busy');
 
+  if (r.intent === '브리핑') {
+    slot.outerHTML = briefHTML(r);
+    wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    wrap.querySelector('[data-replay]')?.addEventListener('click', () => say(r.speech));
+    wrap.addEventListener('change', e => { if (e.target.matches('[data-todo]')) toggleTodo(e.target).then(loadTodos); });
+    S.history.push({ q: text, a: r.speech });
+    Wake.setState('speak', r.speech);
+    await speakAsync(r.speech);
+    return;
+  }
   if (r.intent === '기록') {
     const cid = 'c' + (++S.seq);
     S.cards[cid] = { items: r.items, raw: r.raw };
@@ -908,15 +977,15 @@ function renderTasks() {
     <div class="card task">
       <div class="row"><b class="ttl">${esc(t.이름)}</b>
         <button class="switch" role="switch" aria-checked="${t.활성 === 'Y'}" aria-label="${esc(t.이름)} 켜기/끄기" data-task-toggle="${esc(t.ID)}"></button></div>
-      <div class="when">${esc(taskWhen(t))}${t.요청 === '__DAILY__' ? ' · 그날 기록을 정리한 보고서' : ` · “${esc(t.요청)}”`}</div>
+      <div class="when">${esc(taskWhen(t))}${t.요청 === '__DAILY__' ? ' · 그날 기록을 정리한 보고서' : t.요청 === '__BRIEF__' ? ' · 날씨·일정·할 일 브리핑' : ` · “${esc(t.요청)}”`}</div>
       <div class="row"><span class="next">${t.활성 === 'Y' ? '다음 ' + esc(t.다음실행 || '-') : '꺼짐'}${t.마지막실행 ? ' · 최근 ' + esc(t.마지막실행) : ''}</span><span style="flex:1"></span>
-        ${t.ID !== 'DAILY' ? `<button class="btn sm ghost" data-task-del="${esc(t.ID)}">삭제</button>` : ''}
+        ${t.ID !== 'DAILY' && t.ID !== 'BRIEF' ? `<button class="btn sm ghost" data-task-del="${esc(t.ID)}">삭제</button>` : ''}
         <button class="btn sm" data-task-edit="${esc(t.ID)}">수정</button></div>
     </div>`).join('');
 }
 function openTaskForm(t) {
   S.editTask = t ? { ...t } : { ID: '', 이름: '', 반복: '매일', 요일: '월', 날짜: '', 시각: '08:00', 요청: '', 활성: 'Y' };
-  const x = S.editTask, daily = x.요청 === '__DAILY__';
+  const x = S.editTask, daily = x.요청 === '__DAILY__' || x.요청 === '__BRIEF__';
   const days = String(x.요일 || '').split(',');
   const f = $('#taskForm');
   f.innerHTML = `
@@ -927,7 +996,7 @@ function openTaskForm(t) {
       <div class="fld wide" id="tfDaysWrap"><span>요일</span><div class="days" id="tfDays">${WEEK.map(d => `<button type="button" aria-pressed="${days.includes(d)}">${d}</button>`).join('')}</div></div>
       <label class="fld" id="tfDomWrap"><span>날짜(일)</span><input id="tfDom" type="number" min="1" max="31" value="${esc(/^\d{1,2}$/.test(x.날짜) ? x.날짜 : '1')}"></label>
       <label class="fld" id="tfDateWrap"><span>날짜</span><input id="tfDate" type="date" value="${esc(/^\d{4}-/.test(x.날짜) ? x.날짜 : '')}"></label>
-      ${daily ? '<div class="fld wide"><span>할 일</span><div class="body">그날 기록을 정리해 보고서로 남깁니다.</div></div>'
+      ${daily ? `<div class="fld wide"><span>할 일</span><div class="body">${x.요청 === '__BRIEF__' ? '날씨·오늘 일정·할 일을 모아 브리핑으로 남깁니다.' : '그날 기록을 정리해 보고서로 남깁니다.'}</div></div>`
         : `<label class="fld wide"><span>Lobby에게 맡길 일 (그 시각에 이 질문에 답해 보고서로 남깁니다)</span><textarea id="tfReq" rows="2" placeholder="예) 이번 주 일정과 마감을 정리해 줘">${esc(x.요청)}</textarea></label>`}
     </div>
     <div class="btns"><button class="btn" id="tfCancel">취소</button><button class="btn pri" id="tfSave">저장</button></div>`;
@@ -947,7 +1016,7 @@ async function saveTaskForm() {
   const t = { ...x, 이름: $('#tfName').value.trim() || '예약 작업', 반복: rep, 시각: $('#tfTime').value || '08:00',
     요일: [...document.querySelectorAll('#tfDays button[aria-pressed="true"]')].map(b => b.textContent).join(','),
     날짜: rep === '매월' ? $('#tfDom').value : rep === '한번' ? $('#tfDate').value : '',
-    요청: x.요청 === '__DAILY__' ? '__DAILY__' : ($('#tfReq')?.value || '').trim() };
+    요청: /^__(DAILY|BRIEF)__$/.test(x.요청) ? x.요청 : ($('#tfReq')?.value || '').trim() };
   const b = $('#tfSave'); b.disabled = true;
   try {
     const r = await api('saveTask', { task: t });
@@ -1107,13 +1176,14 @@ async function boot() {
     if (r.docsFolderUrl) $('#docFolder').href = r.docsFolderUrl;
     setUnread(r.unread || 0);
     S.latest = r.latestReport || null;
-    updateBanner();
+    updateBanner(); loadTodos();
     if (!r.version) toast('서버가 v1입니다. Code.gs를 v2로 업데이트해 주세요.', true);
   } catch (e) { toast(e.message, true); }
 }
 
 /* ═════════════ 이벤트 연결 ═════════════ */
 document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => show(t.dataset.v)));
+$('#todoCard').addEventListener('change', e => { if (e.target.matches('[data-todo]')) toggleTodo(e.target); });
 $('#micLog').addEventListener('click', listenLog);
 $('#micTalk').addEventListener('click', micTalk);
 $('#sendLog').addEventListener('click', doParse);
@@ -1209,6 +1279,9 @@ const Demo = (() => {
     { ID: 'D-002', 입력일시: addDays(-1) + ' 08:12', 대상일: addDays(7), 대상시각: '07:00', 유형: '일정', 분류: '여가/취미', 제목: '안성 골프 라운딩', 내용: '오전 7시 티업', 금액: null, 인물: '', 장소: '안성', 태그: '골프', 상태: '예정', 원문: '다음주 토요일 7시 안성 골프', 수정일시: '', 삭제일시: '' },
     { ID: 'D-003', 입력일시: addDays(-2) + ' 21:40', 대상일: addDays(-2), 대상시각: '', 유형: '아이디어', 분류: '앱개발', 제목: '금형 이력 QR 조회 앱', 내용: '금형 교체 이력을 QR로 찍어서 보는 앱', 금액: null, 인물: '', 장소: '', 태그: '금형, QR', 상태: '정상', 원문: '금형 교체 이력을 QR로 찍어서 보는 앱 만들면 좋겠다', 수정일시: '', 삭제일시: '' },
     { ID: 'D-004', 입력일시: addDays(-3) + ' 19:05', 대상일: addDays(-3), 대상시각: '', 유형: '지출', 분류: '생활', 제목: '이마트 장보기', 내용: '주말 장보기', 금액: 123000, 인물: '지숙', 장소: '이마트', 태그: '장보기', 상태: '정상', 원문: '이마트 장보기 12만 3천 원', 수정일시: '', 삭제일시: '' },
+    { ID: 'D-006', 입력일시: addDays(-1) + ' 20:10', 대상일: addDays(-1), 대상시각: '', 유형: '할일', 분류: '차량', 제목: '엔진오일 교체 예약', 내용: '', 금액: null, 인물: '', 장소: '', 태그: '', 상태: '예정', 원문: '', 수정일시: '', 삭제일시: '' },
+    { ID: 'D-007', 입력일시: addDays(-1) + ' 20:11', 대상일: t, 대상시각: '', 유형: '할일', 분류: '생활', 제목: '택배 반품', 내용: '', 금액: null, 인물: '', 장소: '', 태그: '', 상태: '예정', 원문: '', 수정일시: '', 삭제일시: '' },
+    { ID: 'D-008', 입력일시: addDays(-1) + ' 20:12', 대상일: '', 대상시각: '', 유형: '할일', 분류: '앱개발', 제목: 'Lobby 아이콘 다듬기', 내용: '', 금액: null, 인물: '', 장소: '', 태그: '', 상태: '예정', 원문: '', 수정일시: '', 삭제일시: '' },
     { ID: 'D-005', 입력일시: addDays(-4) + ' 17:30', 대상일: addDays(-4), 대상시각: '', 유형: '특이점', 분류: '업무', 제목: '사출 3호기 온도 경보', 내용: '오후에 온도 경보 2회', 금액: null, 인물: '', 장소: '공장', 태그: '3호기, 경보', 상태: '정상', 원문: '사출 3호기 오후에 온도 경보 두 번 떴어', 수정일시: '', 삭제일시: '' },
   ];
   const docs = [
@@ -1221,6 +1294,7 @@ const Demo = (() => {
     { ID: 'R1', 생성일시: addDays(-1) + ' 22:04', 종류: '일일', 제목: '어제 하루 정리', 음성요약: '카일님, 어제 하루 정리해 드립니다. 엔진오일을 8만 5천 원에 교체하셨고, 다음 주 토요일 안성 골프 일정이 있습니다.', 상세: '■ 오늘 한 일\n• 엔진오일 교체 (주행 62,000km)\n■ 지출\n• 오늘 85,000원 · 이번 달 누적 208,000원\n■ 다가오는 일정 (7일)\n• 안성 골프 라운딩 07:00\n■ Lobby의 한마디\n• 골프 전날 장비를 미리 챙겨 두세요.', 읽음: 'N', 예약ID: 'DAILY' },
   ];
   let tasks = [
+    { ID: 'BRIEF', 이름: '아침 브리핑', 반복: '매일', 요일: '', 날짜: '', 시각: '07:30', 요청: '__BRIEF__', 활성: 'Y', 마지막실행: '', 다음실행: addDays(1) + ' 07:30' },
     { ID: 'DAILY', 이름: '오늘의 보고서', 반복: '매일', 요일: '', 날짜: '', 시각: '22:00', 요청: '__DAILY__', 활성: 'Y', 마지막실행: addDays(-1) + ' 22:00', 다음실행: t + ' 22:00' },
   ];
   const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -1228,22 +1302,36 @@ const Demo = (() => {
   const parseDemo = text => {
     const money = (text.match(/(\d+)\s*만\s*(\d+)?\s*천?/) || []);
     const amt = money[1] ? Number(money[1]) * 10000 + (Number(money[2] || 0) * 1000) : null;
-    return { raw: text, items: [{ 유형: amt ? '지출' : '일상', 분류: '생활', 새분류: false, 분류설명: '', 대상일: t, 대상시각: '', 제목: text.slice(0, 20), 내용: text, 금액: amt, 인물: '', 장소: '', 태그: '', 상태: '정상', 확인필요: '데모 모드입니다. 실제 정리는 Claude가 합니다.' }] };
+    const todo = /(해야|사야|갈아야|까먹지)/.test(text);
+    return { raw: text, items: [{ 유형: todo ? '할일' : amt ? '지출' : '일상', 분류: '생활', 새분류: false, 분류설명: '', 대상일: todo ? '' : t, 대상시각: '', 제목: text.slice(0, 20), 내용: text, 금액: amt, 인물: '', 장소: '', 태그: '', 상태: todo ? '예정' : '정상', 확인필요: '데모 모드입니다. 실제 정리는 Claude가 합니다.' }] };
   };
   const nextOf = x => x.반복 === '한번' ? `${x.날짜} ${x.시각}` : `${addDays(1)} ${x.시각}`;
   return {
     async handle(action, d) {
       await wait(['list', 'init', 'docs', 'reports', 'readReport'].includes(action) ? 150 : 700);
       if (action === 'init') return { version: 2, categories: cats, types: S.types, states: ['정상','예정','완료','취소','삭제'], today: t, recent: alive().slice(0, 5), unread: reports.filter(r => r.읽음 !== 'Y').length, latestReport: reports[0], docCount: docs.length, docsFolderUrl: 'https://drive.google.com/' };
+      if (action === 'todos') {
+        const open = alive().filter(r => r.유형 === '할일' && r.상태 === '예정').map(r => ({ ID: r.ID, 제목: r.제목, 기한: r.대상일 }));
+        return { late: open.filter(x => x.기한 && x.기한 < t), due: open.filter(x => x.기한 === t), later: open.filter(x => !x.기한 || x.기한 > t) };
+      }
       if (action === 'parse') return parseDemo(d.text);
       if (action === 'talk' || action === 'ask') {
         const q = d.text || d.question || '';
+        if (/(브리핑|오늘\s*(할\s*일|일정|날씨)|날씨)/.test(q) && action === 'talk') {
+          const open = alive().filter(r => r.유형 === '할일' && r.상태 === '예정').map(r => ({ ID: r.ID, 제목: r.제목, 기한: r.대상일 }));
+          const b = { intent: '브리핑', greet: '좋은 아침입니다', 날짜: new Date().getMonth() + 1 + '월 ' + new Date().getDate() + '일입니다.',
+            날씨: { 지역: '서울', 기온: 14, 날씨: '대체로 맑음', 최고: 21, 최저: 11, 비: '오후 3시쯤 비 소식이 있습니다(60%)' },
+            일정: alive().filter(r => /일정/.test(r.유형) && r.대상일 === t).map(r => ({ ID: r.ID, 제목: r.제목, 시각: r.대상시각 })),
+            late: open.filter(x => x.기한 && x.기한 < t), due: open.filter(x => x.기한 === t), later: open.filter(x => !x.기한 || x.기한 > t) };
+          b.speech = '좋은 아침입니다, 카일님. 서울은 지금 14도, 대체로 맑음이고 오후 3시쯤 비 소식이 있습니다. 오늘 할 일은 택배 반품입니다. 기한이 지난 일이 1개 있습니다. (데모)';
+          return b;
+        }
         if (/(매일|매주|매월|마다).*(시).*(해\s*줘|알려|정리)/.test(q)) {
           const w = (q.match(/([월화수목금토일])요일/) || [])[1];
           const task = { ID: '', 이름: '예약 작업', 반복: w ? '매주' : '매일', 요일: w || '', 날짜: '', 시각: '08:00', 요청: q.replace(/^.*?시에?\s*/, ''), 활성: 'Y', 다음실행: '' };
           return { intent: '예약', task, speech: `${taskWhen(task)}에 “${task.요청}”을 수행합니다. 이렇게 예약할까요?` };
         }
-        if (/(했어|샀어|갔어|먹었|만원|만 원|천원|천 원)/.test(q) && action === 'talk') return { intent: '기록', ...parseDemo(q) };
+        if (/(했어|샀어|갔어|먹었|만원|만 원|천원|천 원|해야|사야|갈아야)/.test(q) && action === 'talk') return { intent: '기록', ...parseDemo(q) };
         if (/(승인원|표준서|검사|규격|공차|CR-?747|FPR)/i.test(q)) {
           return { intent: '질문', speech: 'CR-747 승인원 기준으로 외관, 치수, 기능 세 가지를 검사합니다. 치수 공차는 ±0.05mm입니다. (데모 답변)',
             detail: '• 외관: 흑점·흐름자국·웰드라인 없음 (CR-747 승인원 · p.4)\n• 치수: 전장 142.0±0.05mm (CR-747 승인원 · p.6)\n• 기능: 버튼 작동력 250±50gf (CR-747 승인원 · p.7)',

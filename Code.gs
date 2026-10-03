@@ -23,7 +23,9 @@ const CONFIG = {
   TRASH_DAYS: 30,               // 삭제 후 복구 가능 기간(일)
   MAX_ROWS_TO_AI: 150,          // 답변 작성 시 Claude에게 넘길 최대 기록 수
   DOCS_FOLDER_NAME: 'Lobby 문서',
-  DAILY_REPORT_TIME: '22:00',   // 오늘의 보고서 시각 (앱의 보고 탭에서도 바꿀 수 있음)
+  DAILY_REPORT_TIME: '22:00',
+  BRIEF_TIME: '07:30',          // 아침 브리핑 시각 (앱의 보고 탭에서도 바꿀 수 있음)
+  WEATHER: { name: '서울', lat: 37.5665, lon: 126.978 },   // 브리핑 날씨 지역 (위도·경도를 바꾸면 다른 지역)   // 오늘의 보고서 시각 (앱의 보고 탭에서도 바꿀 수 있음)
   CHUNK_SIZE: 1500,             // 문서를 나누는 조각 크기(글자)
   CHUNK_OVERLAP: 200,
   MAX_DOC_CHUNKS_TO_AI: 8,      // 답변에 넘길 문서 조각 수
@@ -45,12 +47,13 @@ const CHUNK_HEADERS = ['파일ID', '파일명', '조각', '위치', '본문'];
 const REPORT_HEADERS = ['ID', '생성일시', '종류', '제목', '음성요약', '상세', '읽음', '예약ID'];
 const TASK_HEADERS = ['ID', '이름', '반복', '요일', '날짜', '시각', '요청', '활성', '마지막실행', '다음실행'];
 
-const TYPES = ['일상', '지출', '일정', '업무일정', '정보', '특이점', '아이디어'];
+const TYPES = ['일상', '지출', '일정', '업무일정', '정보', '특이점', '아이디어', '할일'];
 const STATES = ['정상', '예정', '완료', '취소', '삭제'];
 const EDITABLE = ['대상일', '대상시각', '유형', '분류', '제목', '내용', '금액', '인물', '장소', '태그', '상태'];
 const REPEATS = ['매일', '매주', '매월', '한번'];
 const WEEKDAYS = ['월', '화', '수', '목', '금', '토', '일'];
 const DAILY_ID = 'DAILY';
+const BRIEF_ID = 'BRIEF';
 
 const DEFAULT_CATEGORIES = [
   ['차량', '정비·주유·보험·세차'],
@@ -92,6 +95,14 @@ function setup() {
   if (!tasks.some(t => t.ID === DAILY_ID)) {
     const t = { ID: DAILY_ID, 이름: '오늘의 보고서', 반복: '매일', 요일: '', 날짜: '', 시각: CONFIG.DAILY_REPORT_TIME,
       요청: '__DAILY__', 활성: 'Y', 마지막실행: '', 다음실행: '' };
+    t.다음실행 = nextRun_(t, new Date());
+    saveTaskRow_(t);
+  }
+
+  // 아침 브리핑(기본 예약)
+  if (!tasks.some(t => t.ID === BRIEF_ID)) {
+    const t = { ID: BRIEF_ID, 이름: '아침 브리핑', 반복: '매일', 요일: '', 날짜: '', 시각: CONFIG.BRIEF_TIME,
+      요청: '__BRIEF__', 활성: 'Y', 마지막실행: '', 다음실행: '' };
     t.다음실행 = nextRun_(t, new Date());
     saveTaskRow_(t);
   }
@@ -145,6 +156,7 @@ function doPost(e) {
       docs: actDocs_, reindex: actReindex_,
       reports: actReports_, readReport: actReadReport_, deleteReport: actDeleteReport_, runDaily: actRunDaily_,
       saveTask: actSaveTask_, deleteTask: actDeleteTask_,
+      todos: actTodos_, brief: actBrief_,
     };
     const fn = handlers[req.action];
     if (!fn) return json_({ ok: false, error: '알 수 없는 요청: ' + req.action });
@@ -179,18 +191,19 @@ function actParse_(req) {
   const system = [
     '너는 카일님의 개인 비서 Lobby다. 카일님의 음성 발화를 기록용 JSON으로 정리한다.',
     dateContext_(),
-    '유형(7개 중 하나): ' + TYPES.join(', '),
+    '유형(8개 중 하나): ' + TYPES.join(', '),
     '  일상=있었던 일, 지출=돈을 쓴 기록(금액 필수), 일정=앞으로의 개인 약속, 업무일정=회사 약속·마감,',
-    '  정보=기억해 둘 사실, 특이점=평소와 다른 일·주의할 일, 아이디어=떠오른 생각.',
+    '  정보=기억해 둘 사실, 특이점=평소와 다른 일·주의할 일, 아이디어=떠오른 생각,',
+    '  할일=앞으로 해야 할 일("~해야 돼", "~사야지", "~까먹지 말기"). 할일의 대상일은 기한이고, 기한 언급이 없으면 ""로 둔다.',
     '분류(기존): ' + cats.map(c => c.name).join(', '),
     '규칙:',
     '- 한 발화에 여러 건이 있으면 각각 나눈다. 호출어("로비야", "안녕 로비" 등)는 내용에서 뺀다.',
     '- 대상일은 yyyy-MM-dd. "어제"=오늘-1, "그저께"=오늘-2, "다음 주 X요일"=다음 주(월~일)의 X요일, "이번 주말"=이번 주 토요일(내용에 "주말" 표기), "다음 달 초"=다음 달 1일(내용에 "초순" 표기).',
-    '- 날짜 언급이 없으면 일상·지출·정보·특이점·아이디어는 오늘. 일정·업무일정인데 날짜가 없으면 대상일을 ""로 두고 확인필요에 질문을 적는다.',
+    '- 날짜 언급이 없으면 일상·지출·정보·특이점·아이디어는 오늘(할일은 ""). 일정·업무일정인데 날짜가 없으면 대상일을 ""로 두고 확인필요에 질문을 적는다.',
     '- 대상시각은 HH:mm(24시간). 없으면 "".',
     '- 금액은 원 단위 정수. "8만5천"=85000. 없으면 null.',
     '- 제목은 20자 안팎 한 줄 요약, 내용은 정리된 본문(수치·조건 보존).',
-    '- 상태: 일정·업무일정은 "예정", 나머지는 "정상".',
+    '- 상태: 일정·업무일정·할일은 "예정", 나머지는 "정상".',
     '- 태그는 검색용 핵심어 1~4개.',
     '- 기존 분류에 맞지 않으면 새 분류명을 제안하고 새분류=true, 분류설명에 한 줄 설명. 억지로 새 분류를 만들지 말 것.',
     '- 유형이 정보이고 "항목=값"으로 정리 가능하면 프로필항목/프로필값을 채운다(예: "차 타이어 규격" / "235/55R19").',
@@ -217,7 +230,7 @@ function normalizeItem_(it, cats) {
     인물: listStr_(it.인물),
     장소: String(it.장소 || ''),
     태그: listStr_(it.태그),
-    상태: STATES.indexOf(it.상태) >= 0 ? it.상태 : (/일정/.test(it.유형) ? '예정' : '정상'),
+    상태: STATES.indexOf(it.상태) >= 0 ? it.상태 : (/일정|할일/.test(it.유형) ? '예정' : '정상'),
     프로필항목: String(it.프로필항목 || ''),
     프로필값: String(it.프로필값 || ''),
     확인필요: String(it.확인필요 || ''),
@@ -256,7 +269,7 @@ function actSave_(req) {
       ids.push(id);
       const cat = known.indexOf(it.분류) >= 0 ? it.분류 : '생활';
       rows.push([
-        id, nowStr, it.대상일 || fmt_(now, 'yyyy-MM-dd'), it.대상시각 || '',
+        id, nowStr, it.대상일 || (it.유형 === '할일' ? '' : fmt_(now, 'yyyy-MM-dd')), it.대상시각 || '',
         TYPES.indexOf(it.유형) >= 0 ? it.유형 : '일상', cat, mask_(it.제목 || ''), mask_(it.내용 || ''),
         toNum_(it.금액) === null ? '' : toNum_(it.금액),
         listStr_(it.인물), it.장소 || '', listStr_(it.태그),
@@ -301,6 +314,7 @@ function actTalk_(req) {
 
   const plan = makePlan_(text, history);
   let intent = plan.의도 || '질문';
+  if (intent === '브리핑') return Object.assign({ intent: '브리핑' }, buildBrief_());
   if (req.mode === 'question' && (intent === '기록' || intent === '예약')) intent = '질문';
 
   if (intent === '기록') {
@@ -325,6 +339,7 @@ function makePlan_(text, history) {
     '  기록 = 있었던 일·지출·앞으로의 일정·기억할 정보·특이점·아이디어를 남기려는 말 ("어제 오일 갈았어 8만원", "다음주 화요일 미라셀 미팅")',
     '  질문 = 기록·회사 문서·일반 지식에 대한 물음, 요약·정리·계획 요청 ("이번 주 일정 뭐야?", "CR-747 승인원 검사 항목 알려줘")',
     '  예약 = 정해진 시각에 Lobby가 알아서 하도록 맡기는 말 ("매주 월요일 8시에 이번 주 일정 정리해줘", "금요일 오후 5시에 이번 주 지출 알려줘")',
+    '  브리핑 = 오늘 하루를 종합해 달라는 말 ("브리핑", "오늘 뭐 해야 돼?", "오늘 할 일·일정·날씨 알려 줘"). 특정 기간(이번 주 등)이나 특정 주제 질문은 브리핑이 아니라 질문.',
     '  대화 = 인사·잡담·감사',
     '  애매하면 질문. 과거형 서술·금액 보고는 기록.',
     '유형: ' + TYPES.join(', '),
@@ -346,9 +361,9 @@ function makePlan_(text, history) {
   ].join('\n');
   const user = JSON.stringify({ 최근대화: history || [], 말씀: text });
   const plan = extractJson_(callClaude_(sys, user, 700));
-  plan.의도 = ['기록', '질문', '예약', '대화'].indexOf(plan.의도) >= 0 ? plan.의도 : '질문';
+  plan.의도 = ['기록', '질문', '예약', '대화', '브리핑'].indexOf(plan.의도) >= 0 ? plan.의도 : '질문';
   plan.출처 = ['기록', '문서', '둘다', '없음'].indexOf(plan.출처) >= 0 ? plan.출처 : '기록';
-  if (plan.의도 === '대화') plan.출처 = '없음';
+  if (plan.의도 === '대화' || plan.의도 === '브리핑') plan.출처 = '없음';
   return plan;
 }
 
@@ -364,10 +379,12 @@ function answer_(q, plan, history) {
     '너는 카일님의 개인 비서 Lobby다. 아래 자료만 근거로 답한다: [조회결과](카일님 기록), [문서발췌](회사 문서), [프로필].',
     dateContext_(),
     '규칙:',
-    '- 기록·문서에 없는 내용은 지어내지 않는다. 기록이 없으면 "해당 기록이 없습니다"라고 말하고 지금 기록할지 묻는다.',
+    '- [조회결과].통계.일치기록있음이 true이면 기록이 있는 것이다. 절대 "기록이 없다"고 하지 말고 건수·날짜를 근거로 답한다. 조회방식에 "풀어서"가 있으면 조건을 완화해 찾은 것이므로 기록의 제목·내용을 직접 읽고 질문과 관련 있는 것만 세어 답한다(예: 루틴운동=운동·헬스·러닝·스트레칭 등 같은 뜻의 기록).',
+    '- 참고기록_검색어불일치는 검색어와 글자는 달라도 같은 뜻일 수 있는 기록이다(기간 밖 기록 포함). 횟수·개수 질문이면 이 목록도 읽고 질문과 같은 활동이면 포함해 직접 센 뒤, 어떤 기록들을 셌는지 상세에 날짜와 함께 적는다.',
+    '- 기록·문서에 없는 내용은 지어내지 않는다. 일치기록있음이 false일 때만 기록이 없다고 하고, 그때도 전체기록수와 함께 "기록 N건 중 관련 기록을 찾지 못했다"고 말하며 "해당 기록이 없습니다"라고 말하고 지금 기록할지 묻는다.',
     '- 문서발췌에 답이 없으면 "등록된 문서에서 찾지 못했습니다"라고 말하고, 어떤 문서를 Lobby 문서 폴더에 넣으면 되는지 한 줄로 제안한다.',
     '- 출처가 없음(인사·잡담·일반 상식)이면 알고 있는 지식으로 짧고 따뜻하게 답한다.',
-    '- 숫자(합계·건수·평균)는 [조회결과].통계 값을 그대로 쓴다. 직접 다시 계산하지 않는다.',
+    '- 숫자(합계·건수·평균)는 [조회결과].통계 값을 그대로 쓴다. 직접 다시 계산하지 않는다(단, 조회방식에 "풀어서"가 있으면 기록을 직접 읽고 관련 건만 세어 건수를 말한다).',
     '- 규격·치수·공차·검사기준·수량 같은 문서 수치는 단위까지 원문 그대로 옮긴다. 추정·반올림 금지.',
     '- 최근대화를 참고해 앞 질문과 이어지게 답한다.',
     '- 음성: 존댓말, 1~3문장, 첫 문장에 결론. 금액은 "48만 2천 원"처럼 읽기 쉽게. 문서를 인용하면 "○○ 승인원에 따르면"처럼 문서명만 짧게. 목록이 4건 이상이면 3건까지만 말하고 "나머지는 화면에 정리해 두었습니다".',
@@ -377,7 +394,7 @@ function answer_(q, plan, history) {
   ].join('\n');
   const payload = {
     질문: q, 최근대화: history || [], 조회계획: plan,
-    조회결과: useRec ? { 통계: result.stats, 기록: result.aiRows } : '(기록은 조회하지 않음)',
+    조회결과: useRec ? { 통계: result.stats, 기록: result.aiRows, 참고기록_검색어불일치: result.extra } : '(기록은 조회하지 않음)',
     문서발췌: useDoc ? (docs.length ? docs.map(d => ({ 번호: d.key, 문서: d.파일명, 위치: d.위치, 내용: d.본문 })) : '(관련 문서 조각을 찾지 못함)') : '(문서는 조회하지 않음)',
     프로필: getProfile_(),
   };
@@ -396,21 +413,31 @@ function answer_(q, plan, history) {
 }
 
 function runPlan_(plan) {
-  let rows = getRecords_().filter(r => r.상태 !== '삭제');
+  const all = getRecords_().filter(r => r.상태 !== '삭제');
   const p = plan || {};
   const from = p.기간 && p.기간.시작, to = p.기간 && p.기간.끝;
-  if (from) rows = rows.filter(r => dayOf_(r) >= from);
-  if (to) rows = rows.filter(r => dayOf_(r) <= to);
-  if (p.유형 && p.유형.length) rows = rows.filter(r => p.유형.indexOf(r.유형) >= 0);
-  if (p.분류 && p.분류.length) rows = rows.filter(r => p.분류.indexOf(r.분류) >= 0);
-  if (p.상태 && p.상태.length) rows = rows.filter(r => p.상태.indexOf(r.상태) >= 0);
-  if (p.검색어 && p.검색어.length) {
-    const kws = p.검색어.map(k => String(k).toLowerCase()).filter(Boolean);
-    rows = rows.filter(r => {
-      const hay = [r.제목, r.내용, r.태그, r.인물, r.장소].join(' ').toLowerCase();
-      return kws.some(k => hay.indexOf(k) >= 0);
-    });
+  const squash = t => String(t || '').toLowerCase().replace(/[\s·/_\-]+/g, '');
+  const kws = (p.검색어 || []).map(squash).filter(Boolean);
+  const has = (arr, v) => !(arr && arr.length) || arr.indexOf(v) >= 0;
+  const byPeriod = r => (!from || dayOf_(r) >= from) && (!to || dayOf_(r) <= to);
+  const byKw = r => {
+    if (!kws.length) return true;
+    const hay = squash([r.제목, r.내용, r.태그, r.인물, r.장소, r.분류, r.원문].join(' '));
+    return kws.some(k => hay.indexOf(k) >= 0);
+  };
+  // 조건을 엄격한 순서대로 시도하고, 0건이면 조금씩 풀어서 다시 찾는다 (AI가 짠 계획이 어긋나도 기록을 놓치지 않게)
+  const tries = [
+    ['', r => byPeriod(r) && has(p.유형, r.유형) && has(p.분류, r.분류) && has(p.상태, r.상태) && byKw(r)],
+    ['유형·분류·상태 조건을 풀어서 찾음', r => byPeriod(r) && byKw(r)],
+    ['기간 조건을 풀어서 찾음(전체 기간)', r => byKw(r)],
+  ];
+  let rows = [], relaxed = '';
+  for (let i = 0; i < tries.length; i++) {
+    rows = all.filter(tries[i][1]);
+    if (rows.length) { relaxed = tries[i][0]; break; }
   }
+  const matched = rows.length > 0;
+  if (!matched) { relaxed = '일치하는 기록 없음 — 최근 기록을 참고용으로 제공'; rows = all.filter(byPeriod); if (!rows.length) rows = all; }
   const asc = p.정렬 === '오래된';
   rows.sort((a, b) => (dayOf_(a) + a.대상시각).localeCompare(dayOf_(b) + b.대상시각) * (asc ? 1 : -1));
 
@@ -420,6 +447,7 @@ function runPlan_(plan) {
     건수: rows.length, 금액건수: money.length, 합계: sum,
     평균: money.length ? Math.round(sum / money.length) : 0,
     기간: { 시작: from || '', 끝: to || '' },
+    조회방식: relaxed || '계획대로 정확히 일치', 일치기록있음: matched, 전체기록수: all.length,
   };
   const g = p.그룹;
   if (g && g !== '없음') {
@@ -434,12 +462,21 @@ function runPlan_(plan) {
     stats.그룹 = groups;
   }
 
-  const limit = Math.min(Number(p.개수) || CONFIG.MAX_ROWS_TO_AI, CONFIG.MAX_ROWS_TO_AI);
+  const wide = relaxed || p.종류 === '통계' || p.계산 === '횟수';
+  const limit = wide ? CONFIG.MAX_ROWS_TO_AI : Math.min(Number(p.개수) || CONFIG.MAX_ROWS_TO_AI, CONFIG.MAX_ROWS_TO_AI);
   const aiRows = rows.slice(0, limit).map(r => ({
     ID: r.ID, 날짜: dayOf_(r), 시각: r.대상시각, 유형: r.유형, 분류: r.분류,
     제목: r.제목, 내용: r.내용, 금액: r.금액, 인물: r.인물, 장소: r.장소, 상태: r.상태,
   }));
-  return { rows: rows, aiRows: aiRows, stats: stats };
+  // 검색어에 안 걸렸지만 동의어일 수 있는 기록(예: 루틴운동 ↔ 러닝·헬스)을 AI가 직접 판단하도록 최근 기록을 함께 넘긴다
+  let extra = [];
+  if (kws.length && matched) {
+    const inRows = {}; rows.forEach(r => inRows[r.ID] = 1);
+    extra = all.filter(r => !inRows[r.ID])
+      .sort((a, b) => (dayOf_(b) + b.대상시각).localeCompare(dayOf_(a) + a.대상시각)).slice(0, 40)
+      .map(r => ({ ID: r.ID, 날짜: dayOf_(r), 유형: r.유형, 분류: r.분류, 제목: r.제목, 내용: String(r.내용).slice(0, 60), 상태: r.상태 }));
+  }
+  return { rows: rows, aiRows: aiRows, stats: stats, extra: extra };
 }
 
 // ───────────────────────── 회사 문서: 폴더 · 읽기(색인) · 검색 ─────────────────────────
@@ -714,6 +751,100 @@ function actReindex_() {
   return Object.assign(r, actDocs_());
 }
 
+// ───────────────────────── 할 일 · 아침 브리핑 ─────────────────────────
+/** 할 일 = 유형 '할일' + 상태 '예정'. 대상일은 기한(없으면 빈칸). 완료는 상태를 '완료'로 바꾸는 것(변경이력에 남음) */
+function todoGroups_(all, today) {
+  const open = all.filter(r => r.유형 === '할일' && r.상태 === '예정')
+    .sort((a, b) => (a.대상일 || '9999').localeCompare(b.대상일 || '9999') || String(a.ID).localeCompare(String(b.ID)));
+  return {
+    late: open.filter(r => r.대상일 && r.대상일 < today),
+    due: open.filter(r => r.대상일 === today),
+    later: open.filter(r => !r.대상일 || r.대상일 > today),
+  };
+}
+const todoPick_ = r => ({ ID: r.ID, 제목: r.제목, 기한: r.대상일, 분류: r.분류, 내용: r.내용 });
+
+function actTodos_() {
+  const g = todoGroups_(getRecords_().filter(r => r.상태 !== '삭제'), fmt_(new Date(), 'yyyy-MM-dd'));
+  return { late: g.late.map(todoPick_), due: g.due.map(todoPick_), later: g.later.slice(0, 30).map(todoPick_) };
+}
+
+function actBrief_() { return { brief: buildBrief_() }; }
+
+const WX_KO = { 0: '맑음', 1: '대체로 맑음', 2: '구름 조금', 3: '흐림', 45: '안개', 48: '안개', 51: '이슬비', 53: '이슬비', 55: '이슬비',
+  56: '어는 비', 57: '어는 비', 61: '비', 63: '비', 65: '강한 비', 66: '어는 비', 67: '어는 비', 71: '눈', 73: '눈', 75: '강한 눈', 77: '싸락눈',
+  80: '소나기', 81: '소나기', 82: '강한 소나기', 85: '눈 소나기', 86: '눈 소나기', 95: '뇌우', 96: '뇌우', 99: '뇌우' };
+
+function hourWord_(h) { return h === 0 ? '밤 12시' : h < 12 ? '오전 ' + h + '시' : h === 12 ? '낮 12시' : '오후 ' + (h - 12) + '시'; }
+function timeWord_(hhmm) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || '')); if (!m) return '';
+  return hourWord_(Number(m[1])) + (m[2] !== '00' ? ' ' + Number(m[2]) + '분' : '');
+}
+
+/** 무료 날씨(Open-Meteo). 실패하면 null — 브리핑은 날씨 없이도 나간다 */
+function getWeather_() {
+  const w = CONFIG.WEATHER;
+  try {
+    const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + w.lat + '&longitude=' + w.lon +
+      '&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
+      '&hourly=precipitation_probability&timezone=Asia%2FSeoul&forecast_days=1';
+    const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) return null;
+    const j = JSON.parse(res.getContentText());
+    const nowH = Number(fmt_(new Date(), 'H'));
+    let rainHour = null, rainP = 0;
+    (j.hourly.time || []).forEach((t, i) => {
+      const h = Number(String(t).slice(11, 13)), p = j.hourly.precipitation_probability[i] || 0;
+      if (h >= nowH && p >= 50 && rainHour === null) { rainHour = h; rainP = p; }
+    });
+    const maxP = j.daily.precipitation_probability_max[0] || 0;
+    const rain = rainHour !== null ? hourWord_(rainHour) + '쯤 비 소식이 있습니다(' + rainP + '%)'
+      : maxP >= 30 ? '비 올 확률은 최대 ' + maxP + '%입니다' : '비 소식은 없습니다';
+    return { 지역: w.name, 기온: Math.round(j.current.temperature_2m), 날씨: WX_KO[j.current.weather_code] || '',
+      최고: Math.round(j.daily.temperature_2m_max[0]), 최저: Math.round(j.daily.temperature_2m_min[0]), 비: rain };
+  } catch (e) { return null; }
+}
+
+/** 오늘 브리핑: AI 없이 시트 기록과 날씨만으로 만든다(무료·빠름) */
+function buildBrief_() {
+  const now = new Date(), today = fmt_(now, 'yyyy-MM-dd'), h = Number(fmt_(now, 'H'));
+  const all = getRecords_().filter(r => r.상태 !== '삭제');
+  const g = todoGroups_(all, today);
+  const schedule = all.filter(r => /일정/.test(r.유형) && r.상태 === '예정' && r.대상일 === today)
+    .sort((a, b) => String(a.대상시각 || '99').localeCompare(String(b.대상시각 || '99')));
+  const wx = getWeather_();
+  const greet = h < 5 ? '늦은 밤입니다' : h < 11 ? '좋은 아침입니다' : h < 17 ? '안녕하세요' : h < 22 ? '좋은 저녁입니다' : '늦은 밤입니다';
+  const label = dateLabel_(today);
+
+  const say = [greet + ', 카일님. ' + label + '입니다.'];
+  const lines = ['■ ' + label];
+  if (wx) {
+    say.push(wx.지역 + '은 지금 ' + wx.기온 + '도, ' + wx.날씨 + '. 최고 ' + wx.최고 + '도, 최저 ' + wx.최저 + '도이고 ' + wx.비 + '.');
+    lines.push('■ 날씨 · ' + wx.지역, '• 지금 ' + wx.기온 + '° ' + wx.날씨 + ' (최고 ' + wx.최고 + '° / 최저 ' + wx.최저 + '°)', '• ' + wx.비);
+  }
+  const sch = r => (r.대상시각 ? timeWord_(r.대상시각) + ' ' : '') + r.제목;
+  if (schedule.length) {
+    say.push('오늘 일정은 ' + schedule.slice(0, 3).map(sch).join(', ') + (schedule.length > 3 ? ' 외 ' + (schedule.length - 3) + '건' : '') + '입니다.');
+    lines.push('■ 오늘 일정', ...schedule.map(r => '• ' + (r.대상시각 ? r.대상시각 + ' ' : '') + r.제목));
+  } else { say.push('오늘 잡힌 일정은 없습니다.'); }
+  if (g.due.length) {
+    say.push('오늘 할 일은 ' + g.due.slice(0, 3).map(r => r.제목).join(', ') + (g.due.length > 3 ? ' 외 ' + (g.due.length - 3) + '가지' : '') + '입니다.');
+  } else { say.push('오늘까지 해야 할 일은 없습니다.'); }
+  if (g.late.length) say.push('기한이 지난 일이 ' + g.late.length + '개 있습니다.');
+  if (g.late.length || g.due.length || g.later.length) {
+    lines.push('■ 할 일');
+    g.late.forEach(r => lines.push('• [기한 지남 ' + r.대상일.slice(5) + '] ' + r.제목));
+    g.due.forEach(r => lines.push('• [오늘까지] ' + r.제목));
+    g.later.slice(0, 5).forEach(r => lines.push('• ' + (r.대상일 ? '[' + r.대상일.slice(5) + '까지] ' : '') + r.제목));
+  }
+  return { greet: greet, 오늘: today, 날짜: label, 날씨: wx, 일정: schedule.map(todoPick_Sch_),
+    late: g.late.map(todoPick_), due: g.due.map(todoPick_), later: g.later.slice(0, 5).map(todoPick_),
+    speech: say.join(' '), detail: lines.join('\n') };
+}
+const todoPick_Sch_ = r => ({ ID: r.ID, 제목: r.제목, 시각: r.대상시각 });
+
+function testBrief() { const b = buildBrief_(); Logger.log(b.speech + '\n\n' + b.detail); }
+
 // ───────────────────────── 보고서 · 예약 작업 ─────────────────────────
 /** 15분마다 자동 실행: 시간이 된 예약(밤 10시 보고서 포함)을 수행 */
 function runScheduler() {
@@ -734,6 +865,10 @@ function runScheduler() {
 
 function runTask_(t) {
   if (t.요청 === '__DAILY__') return buildDailyReport_(fmt_(new Date(), 'yyyy-MM-dd'));
+  if (t.요청 === '__BRIEF__') {
+    const b = buildBrief_();
+    return saveReport_({ 종류: '브리핑', 제목: b.날짜 + ' 아침 브리핑', 음성요약: b.speech, 상세: b.detail, 예약ID: t.ID });
+  }
   const plan = makePlan_(t.요청, []);
   plan.의도 = '질문';
   const a = answer_(t.요청, plan, []);
@@ -754,9 +889,12 @@ function buildDailyReport_(dateStr) {
   today.forEach(r => { byType[r.유형] = (byType[r.유형] || 0) + 1; });
   const stats = { 기록건수: today.length, 유형별: byType, 오늘지출건수: spend.length,
     오늘지출합계: spend.reduce((s, r) => s + r.금액, 0), 이번달지출합계: monthSpend, 다가오는일정수: upcoming.length };
+  const openTodos = todoGroups_(all, dateStr);
+  const todoList = openTodos.late.concat(openTodos.due, openTodos.later).slice(0, 15).map(r => ({ 제목: r.제목, 기한: r.대상일 || '없음' }));
+  stats.남은할일수 = openTodos.late.length + openTodos.due.length + openTodos.later.length;
   const title = dateLabel_(dateStr) + ' 하루 정리';
 
-  if (!today.length && !upcoming.length) {
+  if (!today.length && !upcoming.length && !stats.남은할일수) {
     return saveReport_({ 종류: '일일', 제목: title,
       음성요약: '카일님, 오늘은 남기신 기록이 없습니다. 편안한 밤 보내세요.',
       상세: '• 오늘 기록 0건\n• 7일 안의 예정 일정 없음' });
@@ -769,10 +907,10 @@ function buildDailyReport_(dateStr) {
     '- 숫자는 [통계] 값을 그대로 쓴다. 기록에 없는 일은 지어내지 않는다.',
     '- 음성: 존댓말 3~4문장. "카일님, 오늘 하루 정리해 드립니다."로 시작하고, 가장 중요한 일 → 지출 → 내일 일정 순으로 짧게.',
     '- 상세: 아래 제목 순서로, 해당 내용이 없는 제목은 생략. 목록은 "• "로 시작. 금액은 12,000원 형식.',
-    '  ■ 오늘 한 일 / ■ 지출 (오늘 합계, 이번 달 누적) / ■ 업무·특이점 / ■ 떠오른 아이디어 / ■ 다가오는 일정 (7일) / ■ Lobby의 한마디 (내일을 위한 짧은 제안 1줄)',
+    '  ■ 오늘 한 일 / ■ 지출 (오늘 합계, 이번 달 누적) / ■ 업무·특이점 / ■ 남은 할 일 ([남은할일] 기준, 기한 지난 것 먼저) / ■ 떠오른 아이디어 / ■ 다가오는 일정 (7일) / ■ Lobby의 한마디 (내일을 위한 짧은 제안 1줄)',
     '반드시 JSON만 출력: {"음성":"","상세":""}',
   ].join('\n');
-  const payload = { 통계: stats, 오늘기록: today.map(pick), 다가오는일정: upcoming.slice(0, 15).map(pick) };
+  const payload = { 통계: stats, 오늘기록: today.map(pick), 다가오는일정: upcoming.slice(0, 15).map(pick), 남은할일: todoList };
   const ans = extractJson_(callClaude_(sys, JSON.stringify(payload), 1500));
   return saveReport_({ 종류: '일일', 제목: title, 음성요약: ans.음성 || '', 상세: ans.상세 || '' });
 }
