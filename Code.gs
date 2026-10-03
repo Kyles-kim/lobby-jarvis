@@ -140,8 +140,23 @@ function sheet_(name) { return SpreadsheetApp.getActiveSpreadsheet().getSheetByN
 
 // ───────────────────────── 웹 요청 ─────────────────────────
 function doGet() {
-  return json_({ ok: true, app: 'Lobby', version: 2, msg: 'Lobby 서버가 동작 중입니다.' });
+  return json_({ ok: true, app: 'Lobby', version: 2, build: BUILD, actions: HANDLER_NAMES_(), msg: 'Lobby 서버가 동작 중입니다.' });
 }
+
+const BUILD = '2026-10-03 할일·브리핑';   // 배포된 코드가 최신인지 웹 앱 주소를 열어 확인하는 표식
+
+function handlers_() {
+  return {
+    init: actInit_, parse: actParse_, save: actSave_,
+    ask: r => actTalk_(Object.assign({}, r, { mode: 'question' })), talk: actTalk_,
+    list: actList_, update: actUpdate_, 'delete': actDelete_, restore: actRestore_,
+    docs: actDocs_, reindex: actReindex_,
+    reports: actReports_, readReport: actReadReport_, deleteReport: actDeleteReport_, runDaily: actRunDaily_,
+    saveTask: actSaveTask_, deleteTask: actDeleteTask_,
+    todos: actTodos_, brief: actBrief_,
+  };
+}
+function HANDLER_NAMES_() { return Object.keys(handlers_()); }
 
 function doPost(e) {
   try {
@@ -149,15 +164,7 @@ function doPost(e) {
     const pin = PropertiesService.getScriptProperties().getProperty('APP_PIN');
     if (!pin || String(req.pin) !== String(pin)) return json_({ ok: false, error: '접속 암호가 맞지 않습니다.' });
 
-    const handlers = {
-      init: actInit_, parse: actParse_, save: actSave_,
-      ask: r => actTalk_(Object.assign({}, r, { mode: 'question' })), talk: actTalk_,
-      list: actList_, update: actUpdate_, 'delete': actDelete_, restore: actRestore_,
-      docs: actDocs_, reindex: actReindex_,
-      reports: actReports_, readReport: actReadReport_, deleteReport: actDeleteReport_, runDaily: actRunDaily_,
-      saveTask: actSaveTask_, deleteTask: actDeleteTask_,
-      todos: actTodos_, brief: actBrief_,
-    };
+    const handlers = handlers_();
     const fn = handlers[req.action];
     if (!fn) return json_({ ok: false, error: '알 수 없는 요청: ' + req.action });
     return json_(Object.assign({ ok: true }, fn(req)));

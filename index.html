@@ -292,7 +292,7 @@ main{overflow-y:auto;padding:4px 18px 24px;-webkit-overflow-scrolling:touch}
         <button class="mic" id="micLog" aria-label="기록 말하기 시작">
           <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
         </button>
-        <div class="mic-hint" id="hintLog">버튼을 누르고 말씀하세요</div>
+        <div class="mic-hint" id="hintLog">버튼을 누르고 말씀하세요 (끝나면 다시 누르기)</div>
         <div class="live dim" id="liveLog">예) 어제 엔진오일 갈았어 8만 5천 원</div>
       </div>
       <div class="typebox">
@@ -405,7 +405,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('lobby.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('lobby.' + k, JSON.stringify(v)); } catch {} },
 };
-const DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbxnjH1Ks4btLKmHOQaYgN9-gh_2LbPQSpMEoe1I7Zs-GSAbTmqEM6uyN-a7SgTiNMA16g/exec';
+const DEFAULT_URL = 'https://script.google.com/macros/s/AKfycbymQrDrxO9nZ3PMmy2LtyaTal0AJaStwgwRQKpyWynS3MrIHJcP-IMIUD3YCPJlbp-cmQ/exec';
 const DEFAULT_WAKE = '안녕 로비, 헤이 로비, 로비야, 로비, lobby';
 const WEEK = ['월','화','수','목','금','토','일'];
 const S = {
@@ -457,6 +457,51 @@ function hear({ startTimeout = 7000, max = 15000, onText } = {}) {
     curRec = r;
     try { r.start(); } catch { ended = true; resolve(''); }
   });
+}
+
+/** 길게 듣기(마이크 버튼용): 사용자가 다시 누를 때까지 계속 듣는다.
+ *  브라우저는 잠깐만 말을 멈춰도 스스로 끊으므로, 끊기면 바로 이어서 듣고 앞서 들은 말은 이어 붙인다. */
+function dictate({ onText, maxMs = 180000 } = {}) {
+  let rec = null, prefix = '', cur = '', stopped = false, ended = false, fastEnds = 0, startedAt = 0, resolveFn;
+  const promise = new Promise(res => { resolveFn = res; });
+  const text = () => (prefix + ' ' + cur).replace(/\s+/g, ' ').trim();
+  const cap = setTimeout(() => api_.stop(), maxMs);
+  const finish = () => { if (ended) return; ended = true; clearTimeout(cap); resolveFn(text()); };
+  // 안드로이드 크롬은 같은 말을 누적해서 여러 번 내보내므로, 앞 결과를 이어받은 결과는 덮어쓰고 중복은 버린다
+  const merge = results => {
+    const out = [];
+    for (let i = 0; i < results.length; i++) {
+      const t = results[i][0].transcript.trim(); if (!t) continue;
+      const last = out[out.length - 1];
+      if (last !== undefined && t.startsWith(last)) out[out.length - 1] = t;
+      else if (last !== undefined && last.startsWith(t)) continue;
+      else out.push(t);
+    }
+    return out.join(' ');
+  };
+  const begin = () => {
+    rec = new SR(); rec.lang = 'ko-KR'; rec.interimResults = true; rec.continuous = true; rec.maxAlternatives = 1;
+    startedAt = Date.now();
+    rec.onresult = e => { cur = merge(e.results); onText && onText(text()); };
+    rec.onerror = e => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { toast('마이크 권한을 허용해 주세요.', true); stopped = true; }
+    };
+    rec.onend = () => {
+      if (stopped) { finish(); return; }
+      prefix = text(); cur = '';
+      fastEnds = Date.now() - startedAt < 700 ? fastEnds + 1 : 0;
+      if (fastEnds >= 4) { finish(); return; }          // 바로바로 끊기는 상황이면 무한 반복하지 않고 마친다
+      try { begin(); } catch { finish(); }
+    };
+    rec.start();
+  };
+  const api_ = {
+    manual: true, promise,
+    stop() { stopped = true; try { rec.stop(); } catch { finish(); } setTimeout(finish, 2500); },   // 마지막 말까지 받고 끝냄
+    abort() { stopped = true; try { rec.abort(); } catch {} finish(); },
+  };
+  try { begin(); } catch { stopped = true; finish(); }
+  return api_;
 }
 
 let voiceKo = null;
@@ -580,29 +625,19 @@ function cancelCard(cid) {
 let logRec = null;
 function listenLog() {
   if (!SR) { toast('이 브라우저는 음성 인식을 지원하지 않습니다. 직접 입력해 주세요.', true); return; }
-  if (logRec) { logRec.stop(); return; }
+  if (logRec) { logRec.stop(); return; }                          // 두 번째 누름 = 말 끝
   Wake.pause(); stopSpeaking(); stopRec();
   const mic = $('#micLog'), live = $('#liveLog'), hint = $('#hintLog'), txt = $('#txtLog');
-  let finalText = '';
-  const r = new SR(); r.lang = 'ko-KR'; r.interimResults = true; r.continuous = true;
-  let silence;
-  const arm = () => { clearTimeout(silence); silence = setTimeout(() => r.stop(), 2200); };
-  r.onstart = () => { mic.classList.add('on'); hint.textContent = '듣고 있습니다… 다시 누르면 끝'; live.classList.remove('dim'); live.textContent = ''; arm(); };
-  r.onresult = e => {
-    let interim = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) { const x = e.results[i]; if (x.isFinal) finalText += x[0].transcript; else interim += x[0].transcript; }
-    live.textContent = (finalText + interim).trim(); arm();
-  };
-  r.onerror = e => { if (e.error !== 'no-speech' && e.error !== 'aborted') toast('음성 인식 오류: ' + e.error, true); };
-  r.onend = () => {
-    clearTimeout(silence); mic.classList.remove('on'); hint.textContent = '버튼을 누르고 말씀하세요'; logRec = null;
-    const t = (finalText || live.textContent).trim();
+  mic.classList.add('on'); hint.textContent = '듣고 있습니다… 말씀이 끝나면 마이크를 다시 누르세요'; live.classList.remove('dim'); live.textContent = '';
+  const d = dictate({ onText: x => live.textContent = x });
+  logRec = d;
+  d.promise.then(t => {
+    mic.classList.remove('on'); hint.textContent = '버튼을 누르고 말씀하세요 (끝나면 다시 누르기)'; if (logRec === d) logRec = null;
     Wake.resume();
     if (!t) { live.classList.add('dim'); return; }
     txt.value = t; autoGrow(txt);
     if (S.auto) doParse();
-  };
-  logRec = r; r.start();
+  });
 }
 async function doParse() {
   const text = $('#txtLog').value.trim();
@@ -783,11 +818,14 @@ async function talk(text, voice = false) {
 
 async function micTalk() {
   if (!SR) { toast('이 브라우저는 음성 인식을 지원하지 않습니다. 직접 입력해 주세요.', true); return; }
-  if (curRec) { try { curRec.stop(); } catch {} return; }
+  if (curRec) { try { curRec.stop(); } catch {} return; }       // 두 번째 누름 = 말 끝
   Wake.pause(); stopSpeaking();
   const mic = $('#micTalk'), live = $('#liveTalk');
-  mic.classList.add('on'); live.classList.remove('dim'); live.textContent = ''; $('#hintTalk').textContent = '듣고 있습니다… 다시 누르면 끝';
-  const t = await hear({ startTimeout: 8000, max: 25000, onText: x => live.textContent = x });
+  mic.classList.add('on'); live.classList.remove('dim'); live.textContent = ''; $('#hintTalk').textContent = '듣고 있습니다… 말씀이 끝나면 마이크를 다시 누르세요';
+  const d = dictate({ onText: x => live.textContent = x });
+  curRec = d;
+  const t = await d.promise;
+  if (curRec === d) curRec = null;
   mic.classList.remove('on'); $('#hintTalk').textContent = '기록·질문·예약을 Lobby가 알아서 구분합니다';
   live.textContent = ''; live.classList.add('dim');
   if (t) {
