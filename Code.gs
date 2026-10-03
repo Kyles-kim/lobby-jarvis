@@ -365,6 +365,7 @@ function answer_(q, plan, history) {
     dateContext_(),
     '규칙:',
     '- [조회결과].통계.일치기록있음이 true이면 기록이 있는 것이다. 절대 "기록이 없다"고 하지 말고 건수·날짜를 근거로 답한다. 조회방식에 "풀어서"가 있으면 조건을 완화해 찾은 것이므로 기록의 제목·내용을 직접 읽고 질문과 관련 있는 것만 세어 답한다(예: 루틴운동=운동·헬스·러닝·스트레칭 등 같은 뜻의 기록).',
+    '- 참고기록_검색어불일치는 검색어와 글자는 달라도 같은 뜻일 수 있는 기록이다(기간 밖 기록 포함). 횟수·개수 질문이면 이 목록도 읽고 질문과 같은 활동이면 포함해 직접 센 뒤, 어떤 기록들을 셌는지 상세에 날짜와 함께 적는다.',
     '- 기록·문서에 없는 내용은 지어내지 않는다. 일치기록있음이 false일 때만 기록이 없다고 하고, 그때도 전체기록수와 함께 "기록 N건 중 관련 기록을 찾지 못했다"고 말하며 "해당 기록이 없습니다"라고 말하고 지금 기록할지 묻는다.',
     '- 문서발췌에 답이 없으면 "등록된 문서에서 찾지 못했습니다"라고 말하고, 어떤 문서를 Lobby 문서 폴더에 넣으면 되는지 한 줄로 제안한다.',
     '- 출처가 없음(인사·잡담·일반 상식)이면 알고 있는 지식으로 짧고 따뜻하게 답한다.',
@@ -378,7 +379,7 @@ function answer_(q, plan, history) {
   ].join('\n');
   const payload = {
     질문: q, 최근대화: history || [], 조회계획: plan,
-    조회결과: useRec ? { 통계: result.stats, 기록: result.aiRows } : '(기록은 조회하지 않음)',
+    조회결과: useRec ? { 통계: result.stats, 기록: result.aiRows, 참고기록_검색어불일치: result.extra } : '(기록은 조회하지 않음)',
     문서발췌: useDoc ? (docs.length ? docs.map(d => ({ 번호: d.key, 문서: d.파일명, 위치: d.위치, 내용: d.본문 })) : '(관련 문서 조각을 찾지 못함)') : '(문서는 조회하지 않음)',
     프로필: getProfile_(),
   };
@@ -452,7 +453,15 @@ function runPlan_(plan) {
     ID: r.ID, 날짜: dayOf_(r), 시각: r.대상시각, 유형: r.유형, 분류: r.분류,
     제목: r.제목, 내용: r.내용, 금액: r.금액, 인물: r.인물, 장소: r.장소, 상태: r.상태,
   }));
-  return { rows: rows, aiRows: aiRows, stats: stats };
+  // 검색어에 안 걸렸지만 동의어일 수 있는 기록(예: 루틴운동 ↔ 러닝·헬스)을 AI가 직접 판단하도록 최근 기록을 함께 넘긴다
+  let extra = [];
+  if (kws.length && matched) {
+    const inRows = {}; rows.forEach(r => inRows[r.ID] = 1);
+    extra = all.filter(r => !inRows[r.ID])
+      .sort((a, b) => (dayOf_(b) + b.대상시각).localeCompare(dayOf_(a) + a.대상시각)).slice(0, 40)
+      .map(r => ({ ID: r.ID, 날짜: dayOf_(r), 유형: r.유형, 분류: r.분류, 제목: r.제목, 내용: String(r.내용).slice(0, 60), 상태: r.상태 }));
+  }
+  return { rows: rows, aiRows: aiRows, stats: stats, extra: extra };
 }
 
 // ───────────────────────── 회사 문서: 폴더 · 읽기(색인) · 검색 ─────────────────────────
