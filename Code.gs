@@ -364,10 +364,11 @@ function answer_(q, plan, history) {
     '너는 카일님의 개인 비서 Lobby다. 아래 자료만 근거로 답한다: [조회결과](카일님 기록), [문서발췌](회사 문서), [프로필].',
     dateContext_(),
     '규칙:',
-    '- 기록·문서에 없는 내용은 지어내지 않는다. 기록이 없으면 "해당 기록이 없습니다"라고 말하고 지금 기록할지 묻는다.',
+    '- [조회결과].통계.일치기록있음이 true이면 기록이 있는 것이다. 절대 "기록이 없다"고 하지 말고 건수·날짜를 근거로 답한다. 조회방식에 "풀어서"가 있으면 조건을 완화해 찾은 것이므로 기록의 제목·내용을 직접 읽고 질문과 관련 있는 것만 세어 답한다(예: 루틴운동=운동·헬스·러닝·스트레칭 등 같은 뜻의 기록).',
+    '- 기록·문서에 없는 내용은 지어내지 않는다. 일치기록있음이 false일 때만 기록이 없다고 하고, 그때도 전체기록수와 함께 "기록 N건 중 관련 기록을 찾지 못했다"고 말하며 "해당 기록이 없습니다"라고 말하고 지금 기록할지 묻는다.',
     '- 문서발췌에 답이 없으면 "등록된 문서에서 찾지 못했습니다"라고 말하고, 어떤 문서를 Lobby 문서 폴더에 넣으면 되는지 한 줄로 제안한다.',
     '- 출처가 없음(인사·잡담·일반 상식)이면 알고 있는 지식으로 짧고 따뜻하게 답한다.',
-    '- 숫자(합계·건수·평균)는 [조회결과].통계 값을 그대로 쓴다. 직접 다시 계산하지 않는다.',
+    '- 숫자(합계·건수·평균)는 [조회결과].통계 값을 그대로 쓴다. 직접 다시 계산하지 않는다(단, 조회방식에 "풀어서"가 있으면 기록을 직접 읽고 관련 건만 세어 건수를 말한다).',
     '- 규격·치수·공차·검사기준·수량 같은 문서 수치는 단위까지 원문 그대로 옮긴다. 추정·반올림 금지.',
     '- 최근대화를 참고해 앞 질문과 이어지게 답한다.',
     '- 음성: 존댓말, 1~3문장, 첫 문장에 결론. 금액은 "48만 2천 원"처럼 읽기 쉽게. 문서를 인용하면 "○○ 승인원에 따르면"처럼 문서명만 짧게. 목록이 4건 이상이면 3건까지만 말하고 "나머지는 화면에 정리해 두었습니다".',
@@ -396,21 +397,31 @@ function answer_(q, plan, history) {
 }
 
 function runPlan_(plan) {
-  let rows = getRecords_().filter(r => r.상태 !== '삭제');
+  const all = getRecords_().filter(r => r.상태 !== '삭제');
   const p = plan || {};
   const from = p.기간 && p.기간.시작, to = p.기간 && p.기간.끝;
-  if (from) rows = rows.filter(r => dayOf_(r) >= from);
-  if (to) rows = rows.filter(r => dayOf_(r) <= to);
-  if (p.유형 && p.유형.length) rows = rows.filter(r => p.유형.indexOf(r.유형) >= 0);
-  if (p.분류 && p.분류.length) rows = rows.filter(r => p.분류.indexOf(r.분류) >= 0);
-  if (p.상태 && p.상태.length) rows = rows.filter(r => p.상태.indexOf(r.상태) >= 0);
-  if (p.검색어 && p.검색어.length) {
-    const kws = p.검색어.map(k => String(k).toLowerCase()).filter(Boolean);
-    rows = rows.filter(r => {
-      const hay = [r.제목, r.내용, r.태그, r.인물, r.장소].join(' ').toLowerCase();
-      return kws.some(k => hay.indexOf(k) >= 0);
-    });
+  const squash = t => String(t || '').toLowerCase().replace(/[\s·/_\-]+/g, '');
+  const kws = (p.검색어 || []).map(squash).filter(Boolean);
+  const has = (arr, v) => !(arr && arr.length) || arr.indexOf(v) >= 0;
+  const byPeriod = r => (!from || dayOf_(r) >= from) && (!to || dayOf_(r) <= to);
+  const byKw = r => {
+    if (!kws.length) return true;
+    const hay = squash([r.제목, r.내용, r.태그, r.인물, r.장소, r.분류, r.원문].join(' '));
+    return kws.some(k => hay.indexOf(k) >= 0);
+  };
+  // 조건을 엄격한 순서대로 시도하고, 0건이면 조금씩 풀어서 다시 찾는다 (AI가 짠 계획이 어긋나도 기록을 놓치지 않게)
+  const tries = [
+    ['', r => byPeriod(r) && has(p.유형, r.유형) && has(p.분류, r.분류) && has(p.상태, r.상태) && byKw(r)],
+    ['유형·분류·상태 조건을 풀어서 찾음', r => byPeriod(r) && byKw(r)],
+    ['기간 조건을 풀어서 찾음(전체 기간)', r => byKw(r)],
+  ];
+  let rows = [], relaxed = '';
+  for (let i = 0; i < tries.length; i++) {
+    rows = all.filter(tries[i][1]);
+    if (rows.length) { relaxed = tries[i][0]; break; }
   }
+  const matched = rows.length > 0;
+  if (!matched) { relaxed = '일치하는 기록 없음 — 최근 기록을 참고용으로 제공'; rows = all.filter(byPeriod); if (!rows.length) rows = all; }
   const asc = p.정렬 === '오래된';
   rows.sort((a, b) => (dayOf_(a) + a.대상시각).localeCompare(dayOf_(b) + b.대상시각) * (asc ? 1 : -1));
 
@@ -420,6 +431,7 @@ function runPlan_(plan) {
     건수: rows.length, 금액건수: money.length, 합계: sum,
     평균: money.length ? Math.round(sum / money.length) : 0,
     기간: { 시작: from || '', 끝: to || '' },
+    조회방식: relaxed || '계획대로 정확히 일치', 일치기록있음: matched, 전체기록수: all.length,
   };
   const g = p.그룹;
   if (g && g !== '없음') {
@@ -434,7 +446,8 @@ function runPlan_(plan) {
     stats.그룹 = groups;
   }
 
-  const limit = Math.min(Number(p.개수) || CONFIG.MAX_ROWS_TO_AI, CONFIG.MAX_ROWS_TO_AI);
+  const wide = relaxed || p.종류 === '통계' || p.계산 === '횟수';
+  const limit = wide ? CONFIG.MAX_ROWS_TO_AI : Math.min(Number(p.개수) || CONFIG.MAX_ROWS_TO_AI, CONFIG.MAX_ROWS_TO_AI);
   const aiRows = rows.slice(0, limit).map(r => ({
     ID: r.ID, 날짜: dayOf_(r), 시각: r.대상시각, 유형: r.유형, 분류: r.분류,
     제목: r.제목, 내용: r.내용, 금액: r.금액, 인물: r.인물, 장소: r.장소, 상태: r.상태,
