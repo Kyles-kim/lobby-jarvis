@@ -23,6 +23,11 @@ const CONFIG = {
   TRASH_DAYS: 30,               // 삭제 후 복구 가능 기간(일)
   LEARN_SCAN: 800,              // 입력 습관을 배울 때 살펴볼 최근 기록 수
   LEARN_EXAMPLES: 6,            // 새 입력 정리 시 참고용으로 보여 줄 비슷한 과거 기록 수
+  KRW_PER_USD: 1400,            // 환율(원/달러). 사용 요금을 원화로 보여 줄 때 쓰는 값이라 대략 맞춰 두면 됩니다
+  PRICE_PER_MTOK: {             // 모델별 [입력, 출력] 단가(달러 / 100만 토큰). 모델을 바꾸면 여기도 확인해 주세요
+    'claude-sonnet-4-5': [3, 15], 'claude-haiku-4-5': [1, 5], 'claude-opus-4-5': [5, 25],
+  },
+  MONTH_BUDGET_KRW: 0,          // 월 예산(원). 0이면 끔. 정해 두면 80%·100%에서 화면의 금액 색이 바뀝니다
   MAX_ROWS_TO_AI: 150,          // 답변 작성 시 Claude에게 넘길 최대 기록 수
   DOCS_FOLDER_NAME: 'Lobby 문서',
   DAILY_REPORT_TIME: '22:00',
@@ -38,7 +43,7 @@ const CONFIG = {
 const SH = {
   RECORD: '기록', PROFILE: '프로필', CATEGORY: '분류',
   LOG: '대화로그', HISTORY: '변경이력', TRASH: '휴지통',
-  DOCS: '문서', CHUNKS: '문서조각', REPORT: '보고서', TASKS: '예약',
+  DOCS: '문서', CHUNKS: '문서조각', REPORT: '보고서', TASKS: '예약', USAGE: '사용량',
 };
 
 const REC_HEADERS = ['ID', '입력일시', '대상일', '대상시각', '유형', '분류', '제목', '내용',
@@ -47,6 +52,7 @@ const COL = REC_HEADERS.reduce((o, h, i) => (o[h] = i, o), {});
 const DOC_HEADERS = ['파일ID', '파일명', '형식', '수정일시', '조각수', '읽은일시', '상태', '링크'];
 const CHUNK_HEADERS = ['파일ID', '파일명', '조각', '위치', '본문'];
 const REPORT_HEADERS = ['ID', '생성일시', '종류', '제목', '음성요약', '상세', '읽음', '예약ID'];
+const USAGE_HEADERS = ['날짜', '모델', '호출수', '입력토큰', '출력토큰', '금액(원)'];
 const TASK_HEADERS = ['ID', '이름', '반복', '요일', '날짜', '시각', '요청', '활성', '마지막실행', '다음실행'];
 
 const TYPES = ['일상', '지출', '일정', '업무일정', '정보', '특이점', '아이디어', '할일'];
@@ -85,6 +91,7 @@ function setup() {
   ensureSheet_(ss, SH.CHUNKS, CHUNK_HEADERS, ['A:A']);
   ensureSheet_(ss, SH.REPORT, REPORT_HEADERS, ['A:B', 'H:H']);
   ensureSheet_(ss, SH.TASKS, TASK_HEADERS, ['A:A', 'D:F', 'I:J']);
+  ensureSheet_(ss, SH.USAGE, USAGE_HEADERS, ['A:B']);
 
   if (cat.getLastRow() < 2) {
     const today = fmt_(new Date(), 'yyyy-MM-dd');
@@ -155,7 +162,7 @@ function handlers_() {
     docs: actDocs_, reindex: actReindex_,
     reports: actReports_, readReport: actReadReport_, deleteReport: actDeleteReport_, runDaily: actRunDaily_,
     saveTask: actSaveTask_, deleteTask: actDeleteTask_,
-    todos: actTodos_, brief: actBrief_,
+    todos: actTodos_, brief: actBrief_, usage: () => ({}),
   };
 }
 function HANDLER_NAMES_() { return Object.keys(handlers_()); }
@@ -169,7 +176,9 @@ function doPost(e) {
     const handlers = handlers_();
     const fn = handlers[req.action];
     if (!fn) return json_({ ok: false, error: '알 수 없는 요청: ' + req.action });
-    return json_(Object.assign({ ok: true }, fn(req)));
+    const out = Object.assign({ ok: true }, fn(req));
+    out.usage = usageSummary_();                 // 요청이 끝날 때마다 최신 사용 요금을 함께 보낸다(화면 상단에 표시)
+    return json_(out);
   } catch (err) {
     return json_({ ok: false, error: String(err && err.message || err) });
   }
@@ -454,6 +463,7 @@ function makePlan_(text, history) {
 }
 
 function answer_(q, plan, history) {
+  const t0 = Date.now();
   const src = plan.출처 || '기록';
   const useRec = src === '기록' || src === '둘다';
   const useDoc = src === '문서' || src === '둘다';
@@ -493,7 +503,7 @@ function answer_(q, plan, history) {
     .map(d => ({ 파일명: d.파일명, 위치: d.위치, 링크: d.링크, 발췌: d.본문.replace(/\s+/g, ' ').slice(0, 180) }));
 
   sheet_(SH.LOG).appendRow([fmt_(new Date(), 'yyyy-MM-dd HH:mm'), q, JSON.stringify(plan), ans.음성 || '',
-    '기록 ' + (result.stats ? result.stats.건수 : 0) + ' / 문서 ' + docs.length]);
+    '기록 ' + (result.stats ? result.stats.건수 : 0) + ' / 문서 ' + docs.length + ' / ' + Math.round((Date.now() - t0) / 100) / 10 + '초']);
 
   return { speech: ans.음성 || '', detail: ans.상세 || '', evidence: evidence, docEvidence: docEvidence, stats: result.stats, plan: plan };
 }
@@ -786,7 +796,7 @@ function searchDocs_(keywords, files, q) {
   if (n < 1) return [];
   let kws = (keywords || []).map(k => String(k).trim()).filter(k => k.length >= 2);
   if (!kws.length) kws = String(q).split(/[\s,.?!]+/).filter(k => k.length >= 2).slice(0, 6);
-  kws = kws.filter((k, i) => kws.indexOf(k) === i).slice(0, 10);
+  kws = kws.filter((k, i) => kws.indexOf(k) === i).slice(0, 6);       // 검색어가 많을수록 오래 걸려 6개까지만
 
   const names = sh.getRange(2, 2, n, 1).getValues().map(r => String(r[0]));
   const want = (files || []).map(String).filter(Boolean);
@@ -1251,6 +1261,62 @@ function purgeTrash() {
   if (move.length) tr.getRange(tr.getLastRow() + 1, 1, move.length, REC_HEADERS.length).setValues(move.reverse());
 }
 
+// ───────────────────────── Claude 사용 요금(예상) ─────────────────────────
+// Claude API가 응답마다 알려 주는 토큰 수에 단가를 곱해 "사용량" 탭에 날짜·모델별로 쌓는다.
+// 실제 청구액(console.anthropic.com)과는 환율·단가 차이로 조금 다를 수 있는 "예상 금액"이다.
+function costKrw_(model, inTok, outTok) {
+  const prices = CONFIG.PRICE_PER_MTOK;
+  const key = prices[model] ? model : Object.keys(prices).filter(k => String(model).indexOf(k) === 0)[0];
+  const p = prices[key] || prices['claude-sonnet-4-5'];
+  return (inTok * p[0] + outTok * p[1]) / 1e6 * CONFIG.KRW_PER_USD;
+}
+
+function recordUsage_(model, usage) {
+  if (!usage) return;
+  const lock = LockService.getScriptLock();
+  let locked = false;
+  try {
+    lock.waitLock(5000); locked = true;
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sh = ss.getSheetByName(SH.USAGE) || ensureSheet_(ss, SH.USAGE, USAGE_HEADERS, ['A:B']);
+    const day = fmt_(new Date(), 'yyyy-MM-dd');
+    const inTok = Number(usage.input_tokens || 0) + Number(usage.cache_creation_input_tokens || 0) + Number(usage.cache_read_input_tokens || 0);
+    const outTok = Number(usage.output_tokens || 0);
+    const n = sh.getLastRow() - 1;
+    let row = -1, cur = [day, model, 0, 0, 0, 0];
+    if (n > 0) {
+      const keys = sh.getRange(2, 1, n, 2).getValues();
+      for (let i = keys.length - 1; i >= 0; i--) {            // 오늘 행은 보통 맨 아래쪽에 있다
+        if (cellStr_(keys[i][0], '날짜') === day && String(keys[i][1]) === model) { row = i + 2; break; }
+      }
+      if (row > 0) cur = sh.getRange(row, 1, 1, 6).getValues()[0];
+    }
+    const inAll = Number(cur[3]) + inTok, outAll = Number(cur[4]) + outTok;
+    const next = [day, model, Number(cur[2]) + 1, inAll, outAll, Math.round(costKrw_(model, inAll, outAll))];
+    if (row > 0) sh.getRange(row, 1, 1, 6).setValues([next]);
+    else sh.getRange(sh.getLastRow() + 1, 1, 1, 6).setValues([next]);
+  } catch (e) { /* 요금 기록이 실패해도 답변은 계속 */ }
+  finally { if (locked) lock.releaseLock(); }
+}
+
+function usageSummary_() {
+  try {
+    const sh = sheet_(SH.USAGE);
+    const o = { 오늘: 0, 이번달: 0, 누적: 0, 오늘호출: 0, 월예산: CONFIG.MONTH_BUDGET_KRW, 기준: '예상' };
+    if (!sh) return o;
+    const n = sh.getLastRow() - 1;
+    if (n < 1) return o;
+    const today = fmt_(new Date(), 'yyyy-MM-dd'), month = today.slice(0, 7);
+    sh.getRange(2, 1, n, 6).getValues().forEach(r => {
+      const d = cellStr_(r[0], '날짜'), c = Number(r[5]) || 0;
+      o.누적 += c;
+      if (d.slice(0, 7) === month) o.이번달 += c;
+      if (d === today) { o.오늘 += c; o.오늘호출 += Number(r[2]) || 0; }
+    });
+    return o;
+  } catch (e) { return null; }
+}
+
 // ───────────────────────── 공통 유틸 ─────────────────────────
 function getRecords_() {
   const sh = sheet_(SH.RECORD);
@@ -1344,6 +1410,7 @@ function callClaude_(system, user, maxTokens) {
   const code = res.getResponseCode();
   const body = JSON.parse(res.getContentText());
   if (code !== 200) throw new Error('Claude API 오류(' + code + '): ' + (body.error && body.error.message || ''));
+  recordUsage_(CONFIG.MODEL, body.usage);
   return body.content.map(c => c.text || '').join('');
 }
 
