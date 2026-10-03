@@ -1139,7 +1139,8 @@ function normTime_(s) {
   if (!m) return '';
   let h = Math.min(23, Number(m[1]));
   const mi = Math.min(59, Number(m[2] || 0));
-  if (/오후|저녁|밤/.test(String(s)) && h < 12) h += 12;
+  if (h === 12 && /오전|새벽|밤/.test(String(s))) h = 0;          // "밤 12시"·"오전 12시"는 자정(00시)
+  else if (h < 12 && (/오후|저녁/.test(String(s)) || (/밤/.test(String(s)) && h >= 6))) h += 12;   // "밤 1~5시"는 새벽이라 그대로 둔다
   return ('0' + h).slice(-2) + ':' + ('0' + mi).slice(-2);
 }
 function ymdAdd_(s, n) { const d = Utilities.parseDate(s + ' 12:00', CONFIG.TZ, 'yyyy-MM-dd HH:mm'); return fmt_(new Date(d.getTime() + n * 86400000), 'yyyy-MM-dd'); }
