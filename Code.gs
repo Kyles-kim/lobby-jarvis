@@ -454,6 +454,7 @@ function makePlan_(text, history) {
 }
 
 function answer_(q, plan, history) {
+  const t0 = Date.now();
   const src = plan.출처 || '기록';
   const useRec = src === '기록' || src === '둘다';
   const useDoc = src === '문서' || src === '둘다';
@@ -493,7 +494,7 @@ function answer_(q, plan, history) {
     .map(d => ({ 파일명: d.파일명, 위치: d.위치, 링크: d.링크, 발췌: d.본문.replace(/\s+/g, ' ').slice(0, 180) }));
 
   sheet_(SH.LOG).appendRow([fmt_(new Date(), 'yyyy-MM-dd HH:mm'), q, JSON.stringify(plan), ans.음성 || '',
-    '기록 ' + (result.stats ? result.stats.건수 : 0) + ' / 문서 ' + docs.length]);
+    '기록 ' + (result.stats ? result.stats.건수 : 0) + ' / 문서 ' + docs.length + ' / ' + Math.round((Date.now() - t0) / 100) / 10 + '초']);
 
   return { speech: ans.음성 || '', detail: ans.상세 || '', evidence: evidence, docEvidence: docEvidence, stats: result.stats, plan: plan };
 }
@@ -786,7 +787,7 @@ function searchDocs_(keywords, files, q) {
   if (n < 1) return [];
   let kws = (keywords || []).map(k => String(k).trim()).filter(k => k.length >= 2);
   if (!kws.length) kws = String(q).split(/[\s,.?!]+/).filter(k => k.length >= 2).slice(0, 6);
-  kws = kws.filter((k, i) => kws.indexOf(k) === i).slice(0, 10);
+  kws = kws.filter((k, i) => kws.indexOf(k) === i).slice(0, 6);       // 검색어가 많을수록 오래 걸려 6개까지만
 
   const names = sh.getRange(2, 2, n, 1).getValues().map(r => String(r[0]));
   const want = (files || []).map(String).filter(Boolean);

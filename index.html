@@ -421,13 +421,26 @@ const S = {
 const isDemo = () => S.url === 'demo';
 
 /* ═════════════ 서버 호출 ═════════════ */
+// 읽기만 하는 요청은 서버가 일시적으로 HTML 오류 페이지를 돌려줘도 한 번 더 시도한다 (저장·수정·삭제는 중복 방지를 위해 재시도하지 않음)
+const RETRY_OK = ['talk', 'ask', 'init', 'list', 'docs', 'reports', 'todos', 'brief', 'readReport'];
 async function api(action, data = {}) {
   if (isDemo()) return Demo.handle(action, data);
   if (!S.url) { openSettings(); throw new Error('설정에서 웹 앱 주소를 먼저 입력해 주세요.'); }
-  const res = await fetch(S.url, { method: 'POST', body: JSON.stringify({ ...data, action, pin: S.pin }) });
-  const j = await res.json();
-  if (!j.ok) throw new Error(j.error || '서버 오류');
-  return j;
+  const body = JSON.stringify({ ...data, action, pin: S.pin });
+  const tries = RETRY_OK.includes(action) ? 2 : 1;
+  let last;
+  for (let i = 0; i < tries; i++) {
+    if (i) await new Promise(r => setTimeout(r, 1500));
+    let txt;
+    try { txt = await (await fetch(S.url, { method: 'POST', body })).text(); }
+    catch { last = new Error('서버에 연결하지 못했습니다. 인터넷 연결을 확인해 주세요.'); continue; }
+    let j;
+    try { j = JSON.parse(txt); }
+    catch { last = new Error('서버가 답변을 끝내지 못했습니다(구글 서버의 일시적인 오류이거나 처리 시간이 길었을 수 있습니다). 잠시 뒤 같은 질문을 다시 해 주세요.'); continue; }
+    if (!j.ok) throw new Error(j.error || '서버 오류');       // 서버가 준 오류는 그대로 보여 주고 재시도하지 않음
+    return j;
+  }
+  throw last;
 }
 
 /* ═════════════ 음성: 듣기 · 말하기 ═════════════ */
