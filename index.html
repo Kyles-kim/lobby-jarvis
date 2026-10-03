@@ -829,7 +829,8 @@ async function micTalk() {
   mic.classList.remove('on'); $('#hintTalk').textContent = '기록·질문·예약을 Lobby가 알아서 구분합니다';
   live.textContent = ''; live.classList.add('dim');
   if (t) {
-    if (S.auto) await talk(t, true); else { $('#txtTalk').value = t; autoGrow($('#txtTalk')); }
+    // 버튼으로 시작한 입력은 기록 탭처럼 두 번째 터치로 끝난 뒤 마이크가 저절로 다시 켜지지 않는다(음성 "네/아니오" 확인은 호출어 모드에서만)
+    if (S.auto) await talk(t, false); else { $('#txtTalk').value = t; autoGrow($('#txtTalk')); }
   }
   Wake.resume();
 }
