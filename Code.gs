@@ -21,6 +21,8 @@ const CONFIG = {
   MODEL: 'claude-sonnet-4-5',   // 말로업무일지에서 쓰시는 모델명과 맞춰 주세요
   TZ: 'Asia/Seoul',
   TRASH_DAYS: 30,               // 삭제 후 복구 가능 기간(일)
+  LEARN_SCAN: 800,              // 입력 습관을 배울 때 살펴볼 최근 기록 수
+  LEARN_EXAMPLES: 6,            // 새 입력 정리 시 참고용으로 보여 줄 비슷한 과거 기록 수
   MAX_ROWS_TO_AI: 150,          // 답변 작성 시 Claude에게 넘길 최대 기록 수
   DOCS_FOLDER_NAME: 'Lobby 문서',
   DAILY_REPORT_TIME: '22:00',
@@ -189,6 +191,82 @@ function actInit_() {
   };
 }
 
+// ───────────────────────── 입력 습관 학습 ─────────────────────────
+// 모델을 따로 훈련하지 않고, 카일님이 저장·확인한 기록을 "예시"로 보여 줘서 비슷한 말은 같은 방식으로 정리하게 한다.
+// 기록이 쌓일수록 예시가 늘어나 정확해지고, 화면에서 유형·분류를 고친 기록은 더 높은 비중으로 참고한다.
+function grams_(s) {
+  // 숫자·금액·날짜·어미처럼 어떤 입력에나 나오는 말은 빼야 "비슷한 내용"만 걸러진다
+  const t = String(s || '').toLowerCase()
+    .replace(/[0-9]+/g, ' ')
+    .replace(/(오늘|어제|그저께|내일|모레|아침|점심|저녁|오전|오후|방금|지난주|이번주|했었|했어요|했는데|했어|했다|했음|갔다|갔어|왔어|왔다|했고|하고|에서|에게|으로|이랑|하고|만원|천원|킬로|원)/g, ' ')
+    .replace(/[^0-9a-z가-힣]/g, '');
+  const set = {}; let n = 0;
+  for (let i = 0; i < t.length - 1; i++) { const g = t.substr(i, 2); if (!set[g]) { set[g] = 1; n++; } }
+  return { set: set, n: n };
+}
+function similarity_(a, b) {
+  if (!a.n || !b.n) return 0;
+  let c = 0; Object.keys(a.set).forEach(g => { if (b.set[g]) c++; });
+  return c >= 2 ? c / Math.sqrt(a.n * b.n) : 0;      // 겹치는 글자쌍이 2개 미만이면 우연의 일치로 본다
+}
+
+/** 화면에서 유형·분류를 고친 기록 → { 기록ID: '분류 차량→생활' } */
+function correctionMap_() {
+  const o = {};
+  try {
+    const sh = sheet_(SH.HISTORY);
+    const n = sh.getLastRow() - 1;
+    if (n < 1) return o;
+    const take = Math.min(n, 300);
+    sh.getRange(n + 2 - take, 1, take, 6).getValues().forEach(h => {
+      if ((h[2] === '유형' || h[2] === '분류') && h[5] === '화면') o[String(h[1])] = h[2] + ' ' + h[3] + '→' + h[4];
+    });
+  } catch (e) { /* 이력이 없어도 학습은 계속 */ }
+  return o;
+}
+
+function learnedHints_(text) {
+  try {
+    const all = getRecords_().filter(r => r.상태 !== '삭제').slice(-CONFIG.LEARN_SCAN);
+    if (all.length < 3) return '';
+    const fixes = correctionMap_();
+    const q = grams_(text);
+
+    const scored = all.map(r => {
+      const src = String(r.원문 || (r.제목 + ' ' + r.내용));
+      let s = similarity_(q, grams_(src));
+      if (fixes[r.ID] || r.수정일시) s *= 1.3;          // 카일님이 직접 고친 기록은 더 믿을 만한 예시
+      return { r: r, s: s, src: src };
+    }).filter(x => x.s >= 0.15).sort((a, b) => b.s - a.s);
+
+    const seen = {}, ex = [];
+    scored.forEach(x => {
+      const key = [x.r.유형, x.r.분류, x.r.제목].join('|');
+      if (seen[key] || ex.length >= CONFIG.LEARN_EXAMPLES) return;
+      seen[key] = 1;
+      const r = x.r;
+      ex.push('  "' + x.src.replace(/\s+/g, ' ').slice(0, 60) + '" → 유형=' + r.유형 + ', 분류=' + r.분류 + ', 제목="' + r.제목 + '"' +
+        (r.태그 ? ', 태그=' + r.태그 : '') + (r.금액 !== null ? ', 금액 있음' : '') + (fixes[r.ID] ? '  (카일님이 고침: ' + fixes[r.ID] + ')' : ''));
+    });
+
+    // 전체 습관: 유형별로 자주 쓰는 분류, 자주 쓰는 태그
+    const byType = {}, tags = {};
+    all.forEach(r => {
+      byType[r.유형] = byType[r.유형] || {}; byType[r.유형][r.분류] = (byType[r.유형][r.분류] || 0) + 1;
+      String(r.태그 || '').split(',').map(t => t.trim()).filter(Boolean).forEach(t => tags[t] = (tags[t] || 0) + 1);
+    });
+    const top = o => Object.keys(o).sort((a, b) => o[b] - o[a]);
+    const habit = Object.keys(byType).map(t => t + '→' + top(byType[t]).slice(0, 3).map(c => c + '(' + byType[t][c] + ')').join(', ')).join(' / ');
+    const tagLine = top(tags).slice(0, 15).join(', ');
+
+    const out = ['[카일님의 입력 습관 — 지금까지 저장·확인된 ' + all.length + '건에서 배운 것. 참고용이며 위 규칙·JSON 형식이 우선한다]'];
+    if (ex.length) out.push('비슷했던 과거 입력(같은 방식으로 정리):', ex.join('\n'));
+    if (habit) out.push('유형별 자주 쓰는 분류: ' + habit);
+    if (tagLine) out.push('자주 쓰는 태그(같은 뜻이면 이 표현으로 통일): ' + tagLine);
+    return out.join('\n');
+  } catch (e) { return ''; }       // 학습이 실패해도 입력 정리는 평소처럼 동작
+}
+
 // ───────────────────────── 기록: 정리(parse) ─────────────────────────
 function actParse_(req) {
   const text = mask_(String(req.text || '').trim());
@@ -215,6 +293,7 @@ function actParse_(req) {
     '- 기존 분류에 맞지 않으면 새 분류명을 제안하고 새분류=true, 분류설명에 한 줄 설명. 억지로 새 분류를 만들지 말 것.',
     '- 유형이 정보이고 "항목=값"으로 정리 가능하면 프로필항목/프로필값을 채운다(예: "차 타이어 규격" / "235/55R19").',
     '- 카드번호·계좌번호·비밀번호는 절대 옮겨 적지 말고 "***"로 가린다.',
+    learnedHints_(text),
     '반드시 JSON만 출력:',
     '{"items":[{"유형":"","분류":"","새분류":false,"분류설명":"","대상일":"","대상시각":"","제목":"","내용":"","금액":null,"인물":[],"장소":"","태그":[],"상태":"","프로필항목":"","프로필값":"","확인필요":""}]}',
   ].join('\n');
