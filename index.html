@@ -88,12 +88,12 @@ main{overflow-y:auto;padding:4px 18px 24px;-webkit-overflow-scrolling:touch}
 .stage{display:grid;justify-items:center;gap:12px;padding:18px 0 6px}
 .greet{font-size:13px;color:var(--muted);text-align:center}
 .greet b{color:var(--ink);font-weight:500}
-.mic{position:relative;width:128px;height:128px;border-radius:50%;border:0;background:radial-gradient(circle at 50% 40%,#FFFFFF,#F1EDE4 70%);box-shadow:0 0 0 1px var(--line),0 0 0 10px rgba(212,165,90,.05),0 10px 30px rgba(0,0,0,.45);display:grid;place-items:center;transition:transform .15s}
+.mic{position:relative;width:160px;height:160px;border-radius:50%;border:0;background:radial-gradient(circle at 50% 40%,#FFFFFF,#F1EDE4 70%);box-shadow:0 0 0 1px var(--line),0 0 0 10px rgba(212,165,90,.05),0 10px 30px rgba(0,0,0,.45);display:grid;place-items:center;transition:transform .15s}
 .mic:active{transform:scale(.97)}
 .mic::before{content:"";position:absolute;inset:6px;border-radius:50%;border:2px solid var(--brass);opacity:.8}
-.mic svg{width:40px;height:40px;stroke:var(--brass);fill:none;stroke-width:1.8}
-.mic.small{width:92px;height:92px}
-.mic.small svg{width:30px;height:30px}
+.mic svg{width:50px;height:50px;stroke:var(--brass);fill:none;stroke-width:1.8}
+.mic.small{width:128px;height:128px}
+.mic.small svg{width:40px;height:40px}
 .mic.on::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--brass);animation:ring 1.4s ease-out infinite}
 .mic.on{background:radial-gradient(circle at 50% 40%,#FFF3D9,#F3DFB4 70%)}
 @keyframes ring{from{transform:scale(1);opacity:.8}to{transform:scale(1.35);opacity:0}}
